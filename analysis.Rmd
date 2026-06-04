@@ -1,0 +1,119 @@
+---
+title: "analysis"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_chunk$set(
+  fig.path = "out/",  
+  fig.ext = "pdf",
+  fig.height = 12,
+  fig.width = 16,
+  dpi = 300,                     # high resolution for non-vector formats
+  echo = TRUE,                  
+  warning = TRUE,               
+  message = TRUE                
+)
+```
+
+```{r source}
+source("src/setup.R")
+source("src/fns_associations.R")
+source("src/fns_prevalences.R")
+
+ds <- # dataset
+  
+  readRDS("data/who_hcw_survey_clean.rds")
+
+cb <- # codebook
+
+  read.csv("ext/data_mapping.csv", na.strings = "")
+
+who_ipw_population <- # popuation data
+  
+  readRDS("ext/who_ipw_population.rds")
+
+ipw_sample <- # sample data
+  
+  readRDS("ext/ipw_sample.rds")
+
+# weights to DS
+
+w <- 
+  
+  readRDS("ext/weights.rds")
+
+# total denominator
+who_n_loc <- 
+  
+  readRDS("ext/who_n_loc.rds")
+
+gps_eu <- 
+  
+  readxl::read_xlsx("ext/GP-JQ-EURO_May2026.xlsx") |> 
+  janitor::clean_names()
+
+```
+
+```{r weights}
+ds <- left_join(ds, w, by = "user_id")
+```
+
+# N
+
+Explore MeND
+
+```{r}
+ds |> 
+  filter(work_2 == "Doctor") |> 
+  group_by(specialty_cat, loc_2) |> 
+  mutate(specialty_cat = if_else(specialty_cat == "Primary Care",
+                                 "GP", "Other")) |> 
+  count() |> 
+  drop_na() |> 
+  ggplot(aes(x = loc_2,
+             y = n,
+             fill = specialty_cat)) +
+  geom_col(position = "dodge")
+```
+
+Explore EU data
+
+```{r}
+gps_eu |> 
+  filter(country %in% ds$loc_2) |> 
+  group_by(country) |> 
+  arrange(desc(years)) |> 
+  print(n = 29)
+
+gps_eu_clean <- 
+  
+  gps_eu |>
+  mutate(country = if_else(country == "Czech Republic", "Czechia", country)) |> 
+  filter(country %in% ds$loc_2) |> 
+  rename(gp_n = general_practitioners,
+         loc_2 = country) |>
+  filter(!is.na(loc_2), !is.na(years), !is.na(gp_n)) |>
+  mutate(
+    year_gp = as.integer(years),
+    gp_n  = as.numeric(gp_n)
+  ) |>
+  filter(!is.na(years), !is.na(gp_n)) |>
+  group_by(loc_2) |>
+  slice_max(years, n = 1, with_ties = FALSE) |>
+  ungroup() |> 
+  select(loc_2, gp_n)
+```
+
+```{r}
+ds |> 
+  filter(specialty_cat == "Primary Care") |> 
+  summarise(n = n(), .by = "loc_2") |> 
+  left_join(gps_eu_clean, by = "loc_2") |> 
+  mutate(coverage = n/gp_n*100) |> 
+  ggplot(aes(x = loc_2, y = coverage)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = -0.5)
+  
+```
+
