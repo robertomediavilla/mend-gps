@@ -21,6 +21,8 @@ source("src/setup.R")
 source("src/fns_associations.R")
 source("src/fns_prevalences.R")
 
+#---- MeND data ----
+
 ds <- # dataset
   
   readRDS("data/who_hcw_survey_clean.rds")
@@ -48,10 +50,24 @@ who_n_loc <-
   
   readRDS("ext/who_n_loc.rds")
 
-gps_eu <- 
+#---- External data ----
+
+gps_eu_n <- # N GPs by country
   
   readxl::read_xlsx("ext/GP-JQ-EURO_May2026.xlsx") |> 
   janitor::clean_names()
+
+pop_eu_n <- 
+  
+  read_csv("ext/migr_pop3ctb_page_linear_2_0.csv") |> 
+  janitor::clean_names() |> 
+  select(geopolitical_entity_reporting, obs_value)
+
+expend <- 
+  
+  read_csv("ext/hlth_sha11_hp_page_linear_2_0.csv") |> 
+  janitor::clean_names() |> 
+  select(geopolitical_entity_reporting, obs_value)
 
 ```
 
@@ -59,36 +75,10 @@ gps_eu <-
 ds <- left_join(ds, w, by = "user_id")
 ```
 
-# N
-
-Explore MeND
-
-```{r}
-ds |> 
-  filter(work_2 == "Doctor") |> 
-  group_by(specialty_cat, loc_2) |> 
-  mutate(specialty_cat = if_else(specialty_cat == "Primary Care",
-                                 "GP", "Other")) |> 
-  count() |> 
-  drop_na() |> 
-  ggplot(aes(x = loc_2,
-             y = n,
-             fill = specialty_cat)) +
-  geom_col(position = "dodge")
-```
-
-Explore EU data
-
-```{r}
-gps_eu |> 
-  filter(country %in% ds$loc_2) |> 
-  group_by(country) |> 
-  arrange(desc(years)) |> 
-  print(n = 29)
-
-gps_eu_clean <- 
+```{r preprocess}
+gps_n <- 
   
-  gps_eu |>
+  gps_eu_n |>
   mutate(country = if_else(country == "Czech Republic", "Czechia", country)) |> 
   filter(country %in% ds$loc_2) |> 
   rename(gp_n = general_practitioners,
@@ -103,13 +93,44 @@ gps_eu_clean <-
   slice_max(years, n = 1, with_ties = FALSE) |>
   ungroup() |> 
   select(loc_2, gp_n)
+
+pop_eu_n <- 
+    
+  pop_eu_n |>
+  rename(loc_2 = geopolitical_entity_reporting,
+         pop_n = obs_value) |> 
+  filter(loc_2 %in% ds$loc_2)
+
+expend <- 
+  
+  expend |> 
+  rename(loc_2 = geopolitical_entity_reporting,
+         euro_per_inh = obs_value)
+
+macro_ds <- 
+  
+  left_join(gps_n, pop_eu_n, by = "loc_2") |> 
+  mutate(gp_100k = gp_n/pop_n*100000)
+
+macro_ds <- 
+  
+  who_n_loc |> 
+  filter(work_2 == "Doctor") |> 
+  select(loc_2, value) |> 
+  rename(doc_n = value) |> 
+  left_join(macro_ds, by = "loc_2") |> 
+  mutate(gp_prop = gp_n/doc_n*100)
+
+macro_ds <- left_join(macro_ds, expend, by = "loc_2")
 ```
+
+# Coverage
 
 ```{r}
 ds |> 
   filter(specialty_cat == "Primary Care") |> 
   summarise(n = n(), .by = "loc_2") |> 
-  left_join(gps_eu_clean, by = "loc_2") |> 
+  left_join(macro_ds, by = "loc_2") |> 
   mutate(coverage = n/gp_n*100) |> 
   ggplot(aes(x = loc_2, y = coverage)) +
   geom_col() +
@@ -117,3 +138,198 @@ ds |>
   
 ```
 
+# Macro
+
+```{r gp 100k}
+plot_df <- ds |>
+  filter(specialty_cat == "Primary Care") |>
+  left_join(macro_ds, by = "loc_2") |>
+  drop_na(gp_100k) |> 
+  mutate(loc_2 = fct_reorder(loc_2, gp_100k))
+
+# linear rescale of gp_100k 
+rng_phq <- range(plot_df$phq_sc, na.rm = TRUE)
+rng_gp  <- range(plot_df$gp_100k, na.rm = TRUE)
+b <- diff(rng_phq) / diff(rng_gp)
+a <- rng_phq[1] - rng_gp[1] * b
+
+p1 <- 
+  
+  plot_df |>
+  filter(!loc_2 %in% c("Poland", "Portugal")) |> 
+  group_by(loc_2, gp_100k) |>
+  summarise(mean_phq = mean(phq_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
+  ggplot(aes(x = gp_100k, y = mean_phq)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal()
+
+# linear rescale of gp_100k
+rng_gad <- range(plot_df$gad_sc, na.rm = TRUE)
+rng_gp  <- range(plot_df$gp_100k, na.rm = TRUE)
+b <- diff(rng_gad) / diff(rng_gp)
+a <- rng_gad[1] - rng_gp[1] * b
+
+p2 <- 
+  
+  plot_df |>
+  filter(!loc_2 %in% c("Poland", "Portugal")) |> 
+  group_by(loc_2, gp_100k) |>
+  summarise(mean_gad = mean(gad_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
+  ggplot(aes(x = gp_100k, y = mean_gad)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal()
+
+p1/p2
+```
+
+```{r gp prop}
+plot_df <- ds |>
+  filter(specialty_cat == "Primary Care") |>
+  left_join(macro_ds, by = "loc_2") |>
+  drop_na(gp_prop) |> 
+  mutate(loc_2 = fct_reorder(loc_2, gp_prop))
+
+# linear rescale of gp_prop 
+rng_phq <- range(plot_df$phq_sc, na.rm = TRUE)
+rng_gp  <- range(plot_df$gp_prop, na.rm = TRUE)
+b <- diff(rng_phq) / diff(rng_gp)
+a <- rng_phq[1] - rng_gp[1] * b
+
+p1 <- 
+  
+  plot_df |>
+  filter(!loc_2 %in% c("Poland", "Portugal")) |> 
+  group_by(loc_2, gp_prop) |>
+  summarise(mean_phq = mean(phq_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
+  ggplot(aes(x = gp_prop, y = mean_phq)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal()
+
+# linear rescale of gp_prop
+rng_gad <- range(plot_df$gad_sc, na.rm = TRUE)
+rng_gp  <- range(plot_df$gp_prop, na.rm = TRUE)
+b <- diff(rng_gad) / diff(rng_gp)
+a <- rng_gad[1] - rng_gp[1] * b
+
+p2 <- 
+  
+  plot_df |>
+  filter(!loc_2 %in% c("Poland", "Portugal")) |> 
+  group_by(loc_2, gp_prop) |>
+  summarise(mean_gad = mean(gad_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
+  ggplot(aes(x = gp_prop, y = mean_gad)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal()
+
+p1/p2
+```
+
+```{r expend}
+plot_df <- ds |>
+  filter(specialty_cat == "Primary Care") |>
+  left_join(macro_ds, by = "loc_2") |>
+  drop_na(euro_per_inh) |> 
+  mutate(loc_2 = fct_reorder(loc_2, euro_per_inh))
+
+# linear rescale of euro_per_inh 
+rng_phq <- range(plot_df$phq_sc, na.rm = TRUE)
+rng_gp  <- range(plot_df$euro_per_inh, na.rm = TRUE)
+b <- diff(rng_phq) / diff(rng_gp)
+a <- rng_phq[1] - rng_gp[1] * b
+
+p1 <- 
+  
+  plot_df |>
+  group_by(loc_2, euro_per_inh) |>
+  summarise(mean_phq = mean(phq_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
+  ggplot(aes(x = euro_per_inh, y = mean_phq)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal()
+
+# linear rescale of euro_per_inh
+rng_gad <- range(plot_df$gad_sc, na.rm = TRUE)
+rng_gp  <- range(plot_df$euro_per_inh, na.rm = TRUE)
+b <- diff(rng_gad) / diff(rng_gp)
+a <- rng_gad[1] - rng_gp[1] * b
+
+p2 <- 
+  
+  plot_df |>
+  group_by(loc_2, euro_per_inh) |>
+  summarise(mean_gad = mean(gad_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
+  ggplot(aes(x = euro_per_inh, y = mean_gad)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal()
+
+p1/p2
+```
+
+## turnover
+
+```{r}
+plot_df <- ds |>
+  filter(specialty_cat == "Primary Care") |>
+  left_join(macro_ds, by = "loc_2") |>
+  drop_na(euro_per_inh) |> 
+  mutate(loc_2 = fct_reorder(loc_2, euro_per_inh))
+
+
+p1 <- 
+  
+  plot_df |>
+  group_by(loc_2, euro_per_inh) |>
+  summarise(
+    work_18_prop = mean(work_18 == "Yes", na.rm = TRUE),
+    n = n(), 
+    .groups = "drop") |>
+  ggplot(aes(x = euro_per_inh, y = work_18_prop)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal()
+
+p2 <- 
+  
+  plot_df |>
+  group_by(loc_2, gp_100k) |>
+  summarise(
+    work_18_prop = mean(work_18 == "Yes", na.rm = TRUE),
+    n = n(), 
+    .groups = "drop") |>
+  ggplot(aes(x = gp_100k, y = work_18_prop)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal()
+
+p3 <- 
+  
+  plot_df |>
+  group_by(loc_2, gp_prop) |>
+  summarise(
+    work_18_prop = mean(work_18 == "Yes", na.rm = TRUE),
+    n = n(), 
+    .groups = "drop") |>
+  ggplot(aes(x = gp_prop, y = work_18_prop)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal()
+
+
+
+p1/p2/p3
+
+```
