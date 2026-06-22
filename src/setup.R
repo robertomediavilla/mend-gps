@@ -25,6 +25,17 @@ library(ggpubr)
 library(sf)
 library(patchwork)
 
+# missing data & mice
+
+library(mice)
+library(VIM)
+library(naniar)
+library(sandwich)
+
+# mediation
+
+library(mediation)
+
 # grammar
 
 library(broom.mixed)
@@ -32,10 +43,3 @@ library(glue)
 library(sjlabelled)
 library(rlang)
 library(tidyverse)
-
-# missing data & mice
-
-library(mice)
-library(VIM)
-library(naniar)
-library(sandwich)

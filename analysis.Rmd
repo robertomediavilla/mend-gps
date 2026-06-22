@@ -16,10 +16,11 @@ knitr::opts_chunk$set(
 )
 ```
 
-```{r source}
+```{r source & load}
+#---- Run scripts ----
+
 source("src/setup.R")
-source("src/fns_associations.R")
-source("src/fns_prevalences.R")
+source("src/functions.R")
 
 #---- MeND data ----
 
@@ -31,25 +32,6 @@ cb <- # codebook
 
   read.csv("ext/data_mapping.csv", na.strings = "")
 
-who_ipw_population <- # popuation data
-  
-  readRDS("ext/who_ipw_population.rds")
-
-ipw_sample <- # sample data
-  
-  readRDS("ext/ipw_sample.rds")
-
-# weights to DS
-
-w <- 
-  
-  readRDS("ext/weights.rds")
-
-# total denominator
-who_n_loc <- 
-  
-  readRDS("ext/who_n_loc.rds")
-
 #---- External data ----
 
 gps_eu_n <- # N GPs by country
@@ -57,13 +39,13 @@ gps_eu_n <- # N GPs by country
   readxl::read_xlsx("ext/GP-JQ-EURO_May2026.xlsx") |> 
   janitor::clean_names()
 
-pop_eu_n <- 
+pop_eu_n <- # EU population (for density)
   
   read_csv("ext/migr_pop3ctb_page_linear_2_0.csv") |> 
   janitor::clean_names() |> 
   select(geopolitical_entity_reporting, obs_value)
 
-expend <- 
+expend <- # health expenditure
   
   read_csv("ext/hlth_sha11_hp_page_linear_2_0.csv") |> 
   janitor::clean_names() |> 
@@ -71,11 +53,7 @@ expend <-
 
 ```
 
-```{r weights}
-ds <- left_join(ds, w, by = "user_id")
-```
-
-```{r preprocess}
+```{r preprocess macro}
 gps_n <- 
   
   gps_eu_n |>
@@ -123,6 +101,539 @@ macro_ds <-
 
 macro_ds <- left_join(macro_ds, expend, by = "loc_2")
 ```
+
+```{r var lists}
+# Sociodemographic variables
+
+scdm <- c("scdm_1_rec",
+          "scdm_2_rec",
+          "work_1",
+          "work_7")
+
+# Turnover
+
+out_poisson <- "work_18_poi"
+
+named_outcomes <- c(
+  "Turnover intentions" = "work_18"
+)
+
+# MH exp
+
+mh_dic <- c("phq_co", "gad_co")
+
+mh_sc <- c("phqads_sc", "phqads_z")
+
+named_mh <- c(
+  "Depressive symptoms" = "phq_co",
+  "Anxiety symptoms" = "gad_co"
+)
+
+named_mh_sc <- c("Anxiety and depressive symptoms" = "phqads_sc",
+                 "Anxiety and depressive symptoms (Z score)" = "phqads_z")
+
+
+# Job demands
+
+demands <- c("work_8", "work_11", "work_12", "work_23", "work_24") 
+demands_num <- c(paste0(demands, "_num"))[c(1, 2, 4, 5)] # work_12 is binary
+demands_dic <- c(paste0(demands, "_dic")) 
+
+named_demands <- c(
+  "Extended working hours"    = "work_8_dic",
+  "Frequent night shifts"    = "work_11_dic",
+  "Regular shift work" = "work_12_dic",
+  "Tight deadlines" = "work_23_dic",
+  "Angry patients or relatives" = "work_24_dic")
+
+# Job hazards
+
+hazards <- c("work_30", "work_31", "work_32", "work_33")
+hazards_dic <- c(paste0(hazards, "_dic"))
+
+hazards_num <- c(paste0(hazards, "_num"))
+
+named_hazards <- c(
+  "Sexual harassment"    = "work_30_dic",
+  "Violent threats"    = "work_31_dic",
+  "Physical violence" = "work_32_dic",
+  "Bullying" = "work_33_dic"
+)
+
+# Organisational support structures
+
+protocols <- c("work_25", "work_26", "work_27", "work_28", "work_29")
+protocols_dic <- c(paste0(protocols, "_dic"))
+
+named_protocols <- c(
+  "Work council or union" = "work_25_dic",
+  "Employee feedback"    = "work_26_dic",
+  "Stress action plan"    = "work_27_dic",
+  "Harassment protocol" = "work_28_dic",
+  "Violence protocol" = "work_29_dic"
+)
+
+# Job Resources
+
+resources <- c("work_19", "work_20", "work_21", "work_22")
+resources_dic <- c(paste0(resources, "_dic"))
+resources_num <- c(paste0(resources, "_num"))
+
+
+named_resources <- c(
+  "Influence over work" = "work_19_dic",
+  "Influence over work (breaks)"    = "work_20_dic",
+  "Colleague support"    = "work_21_dic",
+  "Support from superiors" = "work_22_dic"
+)
+
+# define exposures
+
+all_exposures <- c(demands_dic, hazards_dic, resources_dic, protocols_dic)
+
+all_exposures_bis <- c(demands, hazards, resources, protocols)
+
+# composite scores
+
+
+
+# Covars
+
+covs_1 <- c("scdm_1_rec_unord",
+            "scdm_2_rec")
+
+covs_2 <- c("loc_2")
+
+# WC order
+
+wc_order <-  
+  c(demands_dic, hazards_dic, resources_dic, protocols_dic)
+
+wc_order_named <- 
+  c("Extended working hours",
+    "Frequent night shifts",
+    "Regular shift work",
+    "Tight deadlines",
+    "Angry patients or relatives",
+    "Sexual harassment",
+    "Violent threats",
+    "Physical violence", 
+    "Bullying",
+    "Influence over work",
+    "Influence over work (breaks)",
+    "Colleague support",
+    "Support from superiors",
+    "Work council or union",
+    "Employee feedback",
+    "Stress action plan",
+    "Harassment protocol",
+    "Violence protocol")
+
+# This will be needed
+exposure_metadata <- 
+  
+  bind_rows(
+  enframe(
+    named_demands, 
+    name = "Label", 
+    value = "Column"
+    )  |>
+    mutate(Category = "Job Demands"),
+  enframe(
+    named_hazards, 
+    name = "Label", 
+    value = "Column"
+    )  |>  
+    mutate(Category = "Job Hazards"),
+  enframe(
+    named_resources, 
+    name = "Label", 
+    value = "Column"
+    )  |> 
+    mutate(Category = "Job Resources"),
+  enframe(
+    named_protocols, 
+    name = "Label", 
+    value = "Column"
+    )  |> 
+    mutate(Category = "Organisational support structures")
+)
+
+# MH order
+
+mh_order <- 
+  c("Depression", "Anxiety", "Alcohol dependence", "Suicidal thoughts")
+```
+
+```{r preprocess ds}
+
+# Some responses are too long
+
+ds <- 
+  
+  ds  |> 
+  mutate(work_7 = fct_recode(
+    work_7,
+    "Public and private sectors" = 
+      "I work in both the public sector and in the private sector (or I work in the public sector and I am self-employed)",
+    "Private sector only" = 
+      "I work in the private healthcare sector only (I do not work in the public sector)",
+    "Public sector only" = 
+      "I work in the public healthcare sector only (I do not work in the private sector, nor am I self-employed)"
+  ))
+
+
+ds <- 
+  
+  ds |> 
+  mutate(scdm_1 = fct_recode(scdm_1, "Under 20" = "Less than 20 years old"))
+
+
+ds <- 
+  
+  ds |> 
+  mutate(work_5 = fct_recode(
+    work_5,
+    "Extra-hospital emergencies" = 
+      "Emergency care outside hospital (e.g., ambulance)",
+    "In-hospital care" = 
+      "Inpatient care (hospital services)",
+    "Outpatient primary care" = 
+      "Primary care (outpatient services)",
+    "Outpatient secondary care" =
+      "Secondary care (outpatient services)"
+  ))
+
+
+ds <- 
+  
+  ds |> 
+  mutate(work_5_rec = fct_collapse( 
+    work_5,
+    "Inpatient" = c("Emergency department",
+                    "In-hospital care"),
+    "Outpatient" = c("Outpatient primary care",
+                     "Outpatient secondary care"),
+    "Other" = c("Extra-hospital emergencies",
+                "Other")
+    )
+  )
+
+ds <- 
+  
+  ds |> 
+  mutate(work_11 = fct_recode(
+    work_11,
+    "Daily" = 
+      "Every day",
+    "Almost daily" = 
+      "At least 4 days a week, but not every day",
+    "2-3 days/week" = 
+      "2 or 3 days a week",
+    "Almost weekly" = 
+      "Almost every week",
+    "1-2 times/month" =
+      "Once or twice a month",
+    "Less than monthly" =
+    "Less than once a month",
+    "Never/Rarely" = 
+      "Never or very rarely (e.g., once or twice a year)"
+  ))
+
+
+ds <- 
+  
+  ds |> 
+  mutate(work_8 = fct_recode(
+    work_8,
+    "< 11 h" = 
+      "Less than 11 hours",
+    "11-20 h" = 
+      "11-20 hours",
+    "21-30 h" = 
+      "21-30 hours",
+    "31-40 h" = 
+      "31-40 hours",
+    "41-50 h" =
+      "41-50 hours",
+    "51-60 h" = 
+      "51-60 hours",
+    "61-70 h" = 
+      "61-70 hours",
+    "> 70 h" = 
+      "More than 70 hours"
+  ))
+
+# Some variables and exposures require processing
+
+ds <- 
+  
+  ds |> 
+  
+  # Recode household composition 
+  
+  mutate(scdm_5_dic = case_when(
+    str_detect(scdm_5, "with children") ~ "Has children",
+    str_detect(scdm_5, "without children") ~ "No children",
+    TRUE ~ NA
+    ),
+    scdm_5_dic = factor(scdm_5_dic,
+                        levels = c("Has children", "No children"),
+                        ordered = FALSE)
+  ) |>
+  
+  # recode length of service
+  
+  mutate(work_3_rec = fct_collapse(
+    work_3,
+    "5 years or less" = c("Less than 1 year", "1-3 years", "4-5 years"),
+    "More than 10 years" = c("11-20 years", "21-30 years", "31-40 years",
+                             "More than 40 years")
+    )
+  ) |> 
+  
+  # Recode number of job positions
+  
+  mutate(
+    work_4_dic = if_else(work_4 == "One",
+                         "One",
+                         "More than one"),
+    work_4_dic = factor(work_4_dic,
+                        levels = c("One", "More than one"))
+  ) |> 
+  
+  # Recode weekly working hours
+  
+  mutate(
+    work_8_dic = case_when(as.numeric(work_8) <= 5 ~ "No", # <= 50h
+                           as.numeric(work_8) > 5 ~ "Yes"), # > 50h
+    work_8_dic = factor(work_8_dic, levels = c("No", "Yes"))
+  ) |> 
+  
+  # Recode frequency of night work
+  
+  mutate(
+    work_11_dic = 
+      case_when(as.numeric(work_11) > 5 ~ "No", # 1 or 2x a month or less
+                as.numeric(work_11) <= 5 ~ "Yes"), # Almost every week and more
+    work_11_dic = factor(work_11_dic, levels = c("No", "Yes")),
+    work_11 = fct_rev(work_11)
+  ) |> 
+  
+  # name var for shifts
+  
+  mutate(work_12_dic = factor(work_12, levels = c("No", "Yes"))
+  ) |> 
+  
+  # create dichotomous var for contract type
+  
+  mutate(work_16_dic = fct_recode(work_16,
+                                  "Yes" = "Temporary contract",
+                                  "No" = "Fixed contract"),
+         work_16_dic = factor(work_16_dic,
+                              levels = c("No", "Yes"),
+                              ordered = FALSE)
+  ) |> 
+  
+  # recode managing patient anger
+  
+  mutate(
+    across(
+      all_of(c("work_23", "work_24")),
+      ~ factor(
+        fct_collapse(.x,
+                     "Yes" = c("Around 1/4 of the time",
+                               "Around half of the time",
+                               "Around 3/4 of the time",
+                               "Almost all of the time",
+                               "All of the time"),
+                     "No" = c("Never",
+                              "Almost never")),
+                     levels = c("No", "Yes"),
+                     ordered = FALSE),
+        .names = "{.col}_dic"
+        )
+      ) |> 
+  
+  # recode violence
+  
+   mutate(
+    across(
+      all_of(hazards),
+      ~ factor(
+        fct_collapse(.x,
+                     "Yes" = c("Yes, daily", 
+                             "Yes, weekly", 
+                             "Yes, monthly", 
+                             "Yes, a few times"),
+                     "No" = "No"
+        ),
+        levels = c("No", "Yes"), ordered = FALSE
+      ),
+      .names = "{.col}_dic"
+    )
+  ) |>
+  
+  # Recode protocols, drop "Do not know", ensure factor levels
+ 
+   mutate(
+    across(
+      all_of(protocols),
+      ~ fct_recode(.x, NULL = "Do not know"),
+      .names = "{.col}_dic"
+    )
+  ) |> 
+
+  # relevel protocols
+
+  mutate(
+    across(
+      all_of(protocols_dic),
+      ~ fct_relevel(.x, "No")
+    )
+  ) |> 
+  
+  # recode job resources
+  
+  mutate(
+    across(
+      all_of(c("work_19", "work_20", "work_21", "work_22")),
+      ~ factor(
+        fct_collapse(.x,
+                     "No" = c("Sometimes", "Seldom", "Never / Hardly ever"),
+                     "Yes" = c("Always", "Often"),
+        ),
+        levels = c("No", "Yes"), ordered = FALSE
+      ),
+      .names = "{col}_dic"
+    )
+  ) |> 
+  
+  # recode work-life balance
+  
+  mutate(
+    work_34_dic = case_when(as.numeric(work_34) <= 3 ~ "No",
+                            as.numeric(work_34) > 3 ~ "Yes"),
+    work_34_dic = factor(work_34_dic, levels = c("No", "Yes"))
+  ) |> 
+  
+  # create numeric variables
+  
+  mutate(
+    across(
+      all_of(hazards),
+      ~ case_when(
+        .x == "No"                ~ 0,
+        .x == "Yes, a few times"  ~ 1,
+        .x == "Yes, monthly"      ~ 2,
+        .x == "Yes, weekly"       ~ 3,
+        .x == "Yes, daily"        ~ 4,
+        TRUE                      ~ NA_real_
+        ),
+      .names = "{.col}_num"
+      )
+    ) |> 
+  mutate(
+    across(
+      all_of(demands) & !all_of("work_12"), # work_12 is binary
+      \(x) as.numeric(x) - 1, # 0 as reference
+    .names = "{.col}_num")) |> 
+  mutate(
+    across(
+      all_of(resources),
+      \(x) as.numeric(x) - 1, # 0 as reference
+    .names = "{.col}_num")) |> 
+  
+  # create poisson outcome variables
+
+  mutate(
+    work_18_poi = if_else(work_18 == "Yes", 1, 0) |> as.integer()
+  ) |> 
+  
+  mutate(
+    phqads_sc = phq_sc + gad_sc,
+    phqads_z = 
+      (phqads_sc - mean(phqads_sc, na.rm = TRUE)) / sd(phqads_sc, na.rm = TRUE)
+  )
+
+# Composite WC score
+
+ds <- 
+  
+  ds |> 
+  mutate(
+    wc_demands  = rowSums(across(all_of(demands_num)),  na.rm = FALSE),
+    wc_hazards  = rowSums(across(all_of(hazards_num)),  na.rm = FALSE),
+    wc_resources = rowSums(
+      across(all_of(resources_num), ~ max(.x, na.rm = TRUE) - .x), # reverse
+      na.rm = FALSE
+    )
+  ) |> 
+  mutate(
+    wc_demands_z  = 
+      (wc_demands  - mean(wc_demands,  na.rm = TRUE)) / 
+      sd(wc_demands,  na.rm = TRUE),
+    wc_hazards_z  = 
+      (wc_hazards  - mean(wc_hazards,  na.rm = TRUE)) / 
+      sd(wc_hazards,  na.rm = TRUE),
+    wc_resources_z = 
+      (wc_resources - mean(wc_resources, na.rm = TRUE)) / 
+      sd(wc_resources, na.rm = TRUE)
+  )
+
+ds <- 
+  
+  ds |> 
+  mutate(
+    scdm_1_rec_num = case_when(scdm_1_rec == "<30"   ~ "1",
+                               scdm_1_rec == "30-39" ~ "2",
+                               scdm_1_rec == "40-49" ~ "3",
+                               scdm_1_rec == "50-59" ~ "4",
+                               scdm_1_rec == "60+"   ~ "5",
+                               TRUE                  ~ scdm_1_rec
+                               ) |> as.integer(),
+    scdm_1_rec_unord = factor(scdm_1_rec, 
+                              ordered = FALSE,
+                              levels = c("50-59", # reference, lower ITL
+                                         "<30",
+                                         "30-39",
+                                         "40-49",
+                                         "60+"))
+    )
+```
+
+```{r}
+ds |> 
+  select(wc_demands, wc_hazards, wc_resources) |> 
+  cor(use = "complete.obs") |> 
+  round(2)
+```
+
+
+```{r}
+confounders_mh  <- c("scdm_1_rec", "scdm_2_rec",
+                     "wc_demands", "wc_hazards", "wc_resources")
+
+confounders_wc  <- c("scdm_1_rec", "scdm_2_rec")
+
+grid_gp <- bind_rows(
+  tibble(exposure_var = c("phqads_z", "phq_co", "gad_co"), 
+         confounder_key = "mh"),
+  tibble(exposure_var = c("wc_demands_z", "wc_hazards_z", "wc_resources_z"), 
+         confounder_key = "wc")
+) |>
+  mutate(
+    outcome_var = "work_18_poi",
+    profession  = "GP",          # <-- distinct label
+    cluster_var = "loc_2",
+    family_type = "poisson",
+    model_label = "Fully adjusted"
+  )
+
+grid_nongp <- grid_gp |> mutate(profession = "Non-GP")
+```
+
+
 
 # Coverage
 
@@ -333,3 +844,255 @@ p3 <-
 p1/p2/p3
 
 ```
+
+# Models
+
+## MH -> Turnover
+
+Include crude models, and models adjusted for structural factors.
+
+```{r}
+test <- run_adj_glm_v2(
+  data          = ds |> filter(specialty_cat == "Primary Care"),
+  outcome_var   = "work_18_poi",
+  exposure_var  = "phqads_z",
+  confounder_list = c("scdm_1_rec", "scdm_2_rec", 
+                      "wc_demands", "wc_hazards", "wc_resources"),
+  profession    = "All",
+  cluster_var   = "loc_2",
+  family_type   = "poisson",
+  model_label   = "Fully adjusted"
+)
+
+test$multilevel
+test$robust
+```
+
+
+```{r}
+# Run
+
+ds_gp <- ds |> filter(specialty_cat == "Primary Care")
+
+results_gp <- pmap(grid_gp, function(outcome_var, exposure_var, confounder_key,
+                                profession, cluster_var, family_type, 
+                                model_label) {
+  
+  confounders <- if (confounder_key == "mh") confounders_mh else confounders_wc
+  
+  run_adj_glm_v2(
+    data            = ds_gp,
+    outcome_var     = outcome_var,
+    exposure_var    = exposure_var,
+    confounder_list = confounders,
+    profession      = profession,
+    cluster_var     = cluster_var,
+    family_type     = family_type,
+    model_label     = model_label
+  )
+})
+
+# Extract and combine
+results_ml  <- map_dfr(result_gps, "multilevel")
+results_rob <- map_dfr(results, "robust")
+
+results_rob |>
+  mutate(Est_CI = sprintf("%.2f (%.2f, %.2f)", PR, CI_l, CI_u)) |>
+  select(Exposure, Adjustment, PR, CI_l, CI_u, Est_CI, N_Analysis)
+```
+
+```{r}
+# Run
+ds_other <- ds |> filter(work_2 == "Doctor" & specialty_cat != "Primary Care")
+
+results_other <- 
+  
+  pmap(grid |> mutate(profession = "Non-GP"),
+       function(outcome_var, exposure_var, confounder_key,
+                                profession, cluster_var, family_type, 
+                                model_label) {
+  
+  confounders <- if (confounder_key == "mh") confounders_mh else confounders_wc
+  
+  run_adj_glm_v2(
+    data            = ds_other,
+    outcome_var     = outcome_var,
+    exposure_var    = exposure_var,
+    confounder_list = confounders,
+    profession      = "GP",
+    cluster_var     = cluster_var,
+    family_type     = family_type,
+    model_label     = model_label
+  )
+})
+
+# Extract and combine
+results_ml  <- map_dfr(results_other, "multilevel")
+results_rob <- map_dfr(results_other, "robust")
+
+results_rob |>
+  mutate(Est_CI = sprintf("%.2f (%.2f, %.2f)", PR, CI_l, CI_u)) |>
+  select(Exposure, Adjustment, PR, CI_l, CI_u, Est_CI, N_Analysis)
+```
+
+```{r}
+test <- run_adj_glm_v2(
+  data            = ds_gp,
+  outcome_var     = "work_18_poi",
+  exposure_var    = "phqads_z",
+  confounder_list = c("scdm_1_rec", "scdm_2_rec",
+                      "wc_demands", "wc_hazards", "wc_resources"),
+  profession      = "GP",
+  cluster_var     = "loc_2",
+  family_type     = "poisson",
+  model_label     = "Fully adjusted"
+)
+
+test$multilevel
+test$robust
+
+test_2 <- run_adj_glm_v2(
+  data            = ds_other,
+  outcome_var     = "work_18_poi",
+  exposure_var    = "phqads_z",
+  confounder_list = c("scdm_1_rec", "scdm_2_rec",
+                      "wc_demands", "wc_hazards", "wc_resources"),
+  profession      = "non-GP",
+  cluster_var     = "loc_2",
+  family_type     = "poisson",
+  model_label     = "Fully adjusted"
+)
+
+test_2$multilevel
+test_2$robust
+```
+
+```{r}
+run_grid <- function(grid, data) {
+  pmap(grid, function(outcome_var, exposure_var, confounder_key,
+                      profession, cluster_var, family_type, model_label) {
+    confounders <- if (confounder_key == "mh") confounders_mh else confounders_wc
+    run_adj_glm_v2(
+      data            = data,
+      outcome_var     = outcome_var,
+      exposure_var    = exposure_var,
+      confounder_list = confounders,
+      profession      = profession,
+      cluster_var     = cluster_var,
+      family_type     = family_type,
+      model_label     = model_label
+    )
+  })
+}
+
+results_gp    <- run_grid(grid_gp,    ds_gp)
+results_nongp <- run_grid(grid_nongp, ds_other)
+
+results_rob_gp    <- map_dfr(results_gp,    "robust")
+results_rob_nongp <- map_dfr(results_nongp, "robust")
+
+# compare
+
+bind_rows(
+  results_rob_gp    |> mutate(Sample = "GP"),
+  results_rob_nongp |> mutate(Sample = "Non-GP")
+) |>
+  mutate(Est_CI = sprintf("%.2f (%.2f, %.2f)", PR, CI_l, CI_u)) |>
+  select(Sample, Exposure, Est_CI, N_Analysis) |>
+  arrange(Exposure, Sample)
+```
+
+# Mediation
+
+```{r}
+library(mediation)
+
+med_grid <- expand_grid(
+  exposure_var = c("wc_demands_z", "wc_hazards_z", "wc_resources_z"),
+  mediator_var = c("phqads_z", "phq_co", "gad_co")
+) |>
+  mutate(
+    outcome_var     = "work_18_poi",
+    profession      = "GP"
+  )
+
+# med_results <- pmap_dfr(med_grid, function(exposure_var, mediator_var, 
+#                                             outcome_var, profession) {
+#   run_mediation(
+#     data            = ds_gp,
+#     exposure_var    = exposure_var,
+#     mediator_var    = mediator_var,
+#     outcome_var     = outcome_var,
+#     confounder_list = c("scdm_1_rec", "scdm_2_rec"),
+#     profession      = profession,
+#     sims            = 500
+#   )
+# })
+
+test_med <- run_mediation(
+  data            = ds_gp,
+  exposure_var    = "wc_hazards_z",
+  mediator_var    = "phqads_z",
+  outcome_var     = "work_18_poi",
+  confounder_list = c("scdm_1_rec", "scdm_2_rec"),
+  profession      = "GP",
+  sims            = 100   # low count just for testing
+)
+
+test_med
+```
+
+
+```{r}
+test_med_fe <- run_mediation_fe(
+  data            = ds_gp,
+  exposure_var    = "wc_hazards_z",
+  mediator_var    = "phqads_z",
+  outcome_var     = "work_18_poi",
+  confounder_list = c("scdm_1_rec", "scdm_2_rec"),
+  profession      = "GP",
+  sims            = 100
+)
+
+# Compare
+bind_rows(
+  test_med    |> mutate(Model = "Mixed"),
+  test_med_fe |> mutate(Model = "FE")
+) |>
+  select(Model, ACME, ADE, Total, Prop_mediated)
+```
+
+```{r}
+med_results <- pmap_dfr(med_grid, function(exposure_var, mediator_var,
+                                            outcome_var, profession) {
+  run_mediation(
+    data            = ds_gp,
+    exposure_var    = exposure_var,
+    mediator_var    = mediator_var,
+    outcome_var     = outcome_var,
+    confounder_list = c("scdm_1_rec", "scdm_2_rec"),
+    profession      = profession,
+    sims            = 1000
+  )
+})
+
+saveRDS(med_results, "out/models/summary/mediation_gps.rds")
+
+med_results <- pmap_dfr(med_grid, function(exposure_var, mediator_var,
+                                            outcome_var, profession) {
+  run_mediation(
+    data            = ds_other,
+    exposure_var    = exposure_var,
+    mediator_var    = mediator_var,
+    outcome_var     = outcome_var,
+    confounder_list = c("scdm_1_rec", "scdm_2_rec"),
+    profession      = profession,
+    sims            = 1000
+  )
+})
+
+med_results |> 
+  mutate(Profession = "non-GP") |> 
+  saveRDS("out/models/summary/mediation_nongps.rds")
+```
+
