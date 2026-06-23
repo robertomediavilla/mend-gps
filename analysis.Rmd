@@ -1059,93 +1059,110 @@ results_med <-
 saveRDS(results_med, "out/models/summary/results_med.rds")
 ```
 
-```{r}
-library(mediation)
+```{r med tbl}
+#---- GP mediation table ----
+fmt_ci <- function(est, lo, hi, mult = 100, digits = 1) {
+  sprintf(paste0("%.", digits, "f (%.", digits, "f, %.", digits, "f)"),
+          est * mult, lo * mult, hi * mult)
+}
 
-med_grid <- expand_grid(
-  exposure_var = c("wc_demands_z", "wc_hazards_z", "wc_resources_z"),
-  mediator_var = c("phqads_z", "phq_co", "gad_co")
-) |>
+med_tbl_gp_df <-
+  results_med |>
+  filter(Profession == "GP") |>
   mutate(
-    outcome_var     = "work_18_poi",
-    profession      = "GP"
+    Exposure = factor(
+      Exposure,
+      levels = c("wc_demands_z", "wc_hazards_z", "wc_resources_z"),
+      labels = c("Job demands", "Job hazards", "Workplace resources")
+    ),
+    Mediator = factor(
+      Mediator,
+      levels = c("phqads_z", "phq_co", "gad_co"),
+      labels = c(
+        "Anxiety & depressive symptoms (PHQ-ADS)",
+        "Probable depression (PHQ-9)",
+        "Probable anxiety (GAD-7)"
+      )
+    )
+  ) |>
+  arrange(Exposure, Mediator) |>
+  transmute(
+    Exposure,
+    Mediator,
+    N        = format(N, big.mark = ","),
+    Indirect = fmt_ci(ACME,  ACME_CI_l,  ACME_CI_u),
+    Direct   = fmt_ci(ADE,   ADE_CI_l,   ADE_CI_u),
+    Total    = fmt_ci(Total, Total_CI_l, Total_CI_u),
+    Pct_med  = fmt_ci(Prop_mediated, Prop_med_CI_l, Prop_med_CI_u)
   )
 
-# med_results <- pmap_dfr(med_grid, function(exposure_var, mediator_var, 
-#                                             outcome_var, profession) {
-#   run_mediation(
-#     data            = ds_gp,
-#     exposure_var    = exposure_var,
-#     mediator_var    = mediator_var,
-#     outcome_var     = outcome_var,
-#     confounder_list = c("scdm_1_rec", "scdm_2_rec"),
-#     profession      = profession,
-#     sims            = 500
-#   )
-# })
+med_tbl_gp <-
+  med_tbl_gp_df |>
+  flextable() |>
+  set_header_labels(
+    Exposure = "Working condition",
+    Mediator = "Mediator (mental health)",
+    N        = "N",
+    Indirect = "Indirect (ACME)",
+    Direct   = "Direct (ADE)",
+    Total    = "Total",
+    Pct_med  = "% mediated"
+  ) |>
+  add_header_row(
+    values    = c("", "", "", "Risk difference (percentage points)", ""),
+    colwidths = c(1, 1, 1, 3, 1),
+    top       = TRUE
+  ) |>
+  merge_v(j = "Exposure") |>
+  valign(j = "Exposure", valign = "top", part = "body") |>
+  align(i = 1, align = "center", part = "header") |>
+  align(j = c("N", "Indirect", "Direct", "Total", "Pct_med"),
+        align = "center", part = "all") |>
+  theme_booktabs() |>
+  fontsize(size = 9, part = "all") |>
+  autofit() |>
+  add_footer_lines(c(
+    "Effects are absolute differences in the predicted probability of intention to leave the profession (work_18), in percentage points, per 1-SD increase in the working-condition composite. All composites oriented so that higher scores indicate more adverse conditions (workplace resources reverse-scored). Models adjusted for age and sex with a country random intercept; mediation estimated by quasi-Bayesian approximation (1000 simulations).",
+    "ACME, average causal mediation effect (indirect path through mental health); ADE, average direct effect. PHQ-ADS, summed PHQ-9 and GAD-7 symptom score (per SD); PHQ-9, depression caseness (cutoff ≥10); GAD-7, anxiety caseness (cutoff ≥10)."
+  ))
 
-test_med <- run_mediation(
-  data            = ds_gp,
-  exposure_var    = "wc_hazards_z",
-  mediator_var    = "phqads_z",
-  outcome_var     = "work_18_poi",
-  confounder_list = c("scdm_1_rec", "scdm_2_rec"),
-  profession      = "GP",
-  sims            = 100   # low count just for testing
-)
-
-test_med
+save_as_docx(med_tbl_gp, path = "out/tables/med_tbl_gp.docx")
 ```
 
-```{r}
-test_med_fe <- run_mediation_fe(
-  data            = ds_gp,
-  exposure_var    = "wc_hazards_z",
-  mediator_var    = "phqads_z",
-  outcome_var     = "work_18_poi",
-  confounder_list = c("scdm_1_rec", "scdm_2_rec"),
-  profession      = "GP",
-  sims            = 100
-)
-
-# Compare
-bind_rows(
-  test_med    |> mutate(Model = "Mixed"),
-  test_med_fe |> mutate(Model = "FE")
-) |>
-  select(Model, ACME, ADE, Total, Prop_mediated)
-```
-
-```{r}
-med_results <- pmap_dfr(med_grid, function(exposure_var, mediator_var,
-                                            outcome_var, profession) {
-  run_mediation(
-    data            = ds_gp,
-    exposure_var    = exposure_var,
-    mediator_var    = mediator_var,
-    outcome_var     = outcome_var,
-    confounder_list = c("scdm_1_rec", "scdm_2_rec"),
-    profession      = profession,
-    sims            = 1000
-  )
-})
-
-saveRDS(med_results, "out/models/summary/mediation_gps.rds")
-
-med_results <- pmap_dfr(med_grid, function(exposure_var, mediator_var,
-                                            outcome_var, profession) {
-  run_mediation(
-    data            = ds_other,
-    exposure_var    = exposure_var,
-    mediator_var    = mediator_var,
-    outcome_var     = outcome_var,
-    confounder_list = c("scdm_1_rec", "scdm_2_rec"),
-    profession      = profession,
-    sims            = 1000
-  )
-})
-
-med_results |> 
-  mutate(Profession = "non-GP") |> 
-  saveRDS("out/models/summary/mediation_nongps.rds")
-```
+Important distinction here: the closest value isn't an exact match to
+anything in results_main, and it's worth being precise about why. The
+scales differ. Your main model row 4 gives a prevalence ratio of 1.49 —
+multiplicative, "demands raise turnover risk by 49% per SD." The
+mediation Total of \~4.0 pp is additive, "demands raise the absolute
+probability of turnover by 4 percentage points per SD." These describe
+the same association but on different scales, so they will never be
+numerically equal. Which mediation row corresponds to that PR. The
+relevant comparison is the mediation row with the same exposure and the
+same confounder set. Your main model row 4 (wc_demands_z, GP, fully
+adjusted with confs_wc = age + sex) corresponds to the demands rows in
+the mediation table. But there are three of them (4.0, 4.7, 4.6), one
+per mediator — and here's the subtle point: the Total effect should be
+identical across all three, because the total effect of demands on
+turnover does not depend on which mediator you chose. The small
+differences (4.0 vs 4.7 vs 4.6) come entirely from the analytic sample
+changing via listwise deletion — each mediation model drops rows missing
+that particular mediator, and PHQ-9/GAD-7 caseness have different
+missingness than the continuous PHQ-ADS. So the honest answer: all three
+are estimating the same total effect of demands; they differ only
+because of differing N. The PHQ-ADS row (4.0 pp, N = 8027) is on the
+largest, most complete sample, so it's the most stable estimate of the
+demands total effect. To actually verify the two analyses agree, don't
+compare the PR to the pp directly. Instead, convert. Your main model
+also reports a baseline risk you can use: for a binary exposure like
+phq_co you have Risk_Unexp = 6.4% and Risk_Exp = 14.4%, a difference of
+8 pp on the response scale. For the continuous wc_demands_z the PR is
+1.49, and at a baseline turnover risk of roughly 8–9% in GPs, a 49%
+multiplicative increase per SD works out to roughly 4 pp on the absolute
+scale — which lands right on your mediation Total of 4.0. That
+back-of-envelope reconciliation is the check that the two pipelines are
+telling a consistent story. One caveat worth stating in the methods: the
+mediation Total comes from a glmer Poisson outcome model with the
+mediator also in the model structure, whereas the main-model PR comes
+from a Poisson model without the mediator. They won't reconcile to
+arbitrary precision, but they should be in the same ballpark, and they
+are.
