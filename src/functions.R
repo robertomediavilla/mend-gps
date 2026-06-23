@@ -55,10 +55,11 @@ run_adj_glm_v2 <-
     model_suffix <- case_when(
       model_label == "Partially adjusted" ~ "str",
       model_label == "Fully adjusted"     ~ "adj",
+      model_label == "Crude"              ~ "cr",
       TRUE ~ tolower(gsub(" ", "_", model_label))
     )
     
-    message("out: ", out_short, " | exp: ", exp_short, " | prof: ", prof_short)
+    message("out: ", out_short, " | exp: ", exp_short, " | prof: ", prof_short, " | mod: ", model_suffix)
     
     # --- Detect exposure type ---
     is_binary_exposure <- is.factor(data[[exposure_var]]) && 
@@ -97,7 +98,7 @@ run_adj_glm_v2 <-
       poisson(link = "log")
     
     # --- Fit models (caching unchanged) ---
-    file_name_ml <- paste0("glm_", out_short, "_", exp_short, "_", 
+    file_name_ml <- paste0("glm_", out_short, "_", exp_short, "_",
                            prof_short, "_", model_suffix, "_ml.rds")
     file_path_ml <- file.path(output_dir, file_name_ml)
     
@@ -106,18 +107,23 @@ run_adj_glm_v2 <-
       ml <- tryCatch(readRDS(file_path_ml), error = function(e) {
         file.remove(file_path_ml); NULL })
     }
+    
     if (is.null(ml)) {
-      f_ml <- as.formula(paste0(
-        outcome_var, " ~ ", exposure_var, " + ",
-        paste(active_confounders, collapse = " + "),
-        " + (1 | ", cluster_var, ")"))
+      f_ml <- if (is.null(active_confounders) || length(active_confounders) == 0) {
+        as.formula(paste0(outcome_var, " ~ ", exposure_var,
+                          " + (1 | ", cluster_var, ")"))
+      } else {
+        as.formula(paste0(outcome_var, " ~ ", exposure_var, " + ",
+                          paste(active_confounders, collapse = " + "),
+                          " + (1 | ", cluster_var, ")"))
+      }
       ml <- glmer(f_ml, data = ds_clean, family = curr_family,
                   control = glmerControl(optimizer = "bobyqa",
                                          optCtrl = list(maxfun = 2e5)))
       saveRDS(ml, file_path_ml)
     }
     
-    file_name_rob <- paste0("glm_", out_short, "_", exp_short, "_", 
+    file_name_rob <- paste0("glm_", out_short, "_", exp_short, "_",
                             prof_short, "_", model_suffix, "_rob.rds")
     file_path_rob <- file.path(output_dir, file_name_rob)
     
@@ -126,10 +132,14 @@ run_adj_glm_v2 <-
       rob <- tryCatch(readRDS(file_path_rob), error = function(e) {
         file.remove(file_path_rob); NULL })
     }
+    
     if (is.null(rob)) {
-      f_rob <- as.formula(paste0(
-        outcome_var, " ~ ", exposure_var, " + ",
-        paste(active_confounders, collapse = " + ")))
+      f_rob <- if (is.null(active_confounders) || length(active_confounders) == 0) {
+        as.formula(paste0(outcome_var, " ~ ", exposure_var))
+      } else {
+        as.formula(paste0(outcome_var, " ~ ", exposure_var, " + ",
+                          paste(active_confounders, collapse = " + ")))
+      }
       rob <- glm(f_rob, data = ds_clean, family = curr_family)
       saveRDS(rob, file_path_rob)
     }
@@ -226,18 +236,26 @@ run_mediation <- function(data, exposure_var, mediator_var, outcome_var,
     TRUE ~ gsub("[^a-z0-9]", "", tolower(profession))
   )
   
-  file_name <- paste0("med_", exp_short, "_", med_short, "_", 
+  file_name <- paste0("med_", exp_short, "_", med_short, "_",
                       out_short, "_", prof_short, ".rds")
   file_path <- file.path(output_dir, file_name)
   
-  message("Running: ", file_name)
+  message("exp: ", exp_short, " | med: ", med_short, " | out: ", out_short, " | prof: ", prof_short)
+  
+  # --- Cache check ---
+  if (file.exists(file_path)) {
+    cached <- tryCatch(readRDS(file_path), error = function(e) {
+      file.remove(file_path); NULL
+    })
+    if (!is.null(cached)) {
+      message("Loaded from cache: ", file_name)
+      return(cached$result)
+    }
+  }
   
   # --- Detect mediator type ---
   is_binary_mediator <- is.factor(data[[mediator_var]]) &&
     all(levels(data[[mediator_var]]) %in% c("No", "Yes"))
-  
-  is_binary_outcome <- is.factor(data[[outcome_var]]) ||
-    all(na.omit(as.numeric(data[[outcome_var]])) %in% c(0, 1, 1, 2))
   
   # --- Clean data ---
   required_vars <- unique(c(outcome_var, exposure_var, mediator_var,
@@ -295,37 +313,37 @@ run_mediation <- function(data, exposure_var, mediator_var, outcome_var,
   # --- Run mediation ---
   med_result <- mediate(
     fit_med, fit_out,
-    treat   = exposure_var,
-    mediator = mediator_var,
-    data    = ds_clean,
-    sims    = sims,
-    boot    = FALSE,
+    treat        = exposure_var,
+    mediator     = mediator_var,
+    data         = ds_clean,
+    sims         = sims,
+    boot         = FALSE,
     boot.ci.type = "perc"
   )
   
   # --- Extract results ---
   out <- tibble(
-    Exposure          = exposure_var,
-    Mediator          = mediator_var,
-    Outcome           = outcome_var,
-    Profession        = profession,
-    N                 = n_size,
-    ACME              = med_result$d.avg,
-    ACME_CI_l         = med_result$d.avg.ci[1],
-    ACME_CI_u         = med_result$d.avg.ci[2],
-    ACME_p            = med_result$d.avg.p,
-    ADE               = med_result$z.avg,
-    ADE_CI_l          = med_result$z.avg.ci[1],
-    ADE_CI_u          = med_result$z.avg.ci[2],
-    ADE_p             = med_result$z.avg.p,
-    Total             = med_result$tau.coef,
-    Total_CI_l        = med_result$tau.ci[1],
-    Total_CI_u        = med_result$tau.ci[2],
-    Total_p           = med_result$tau.p,
-    Prop_mediated     = med_result$n.avg,
-    Prop_med_CI_l     = med_result$n.avg.ci[1],
-    Prop_med_CI_u     = med_result$n.avg.ci[2],
-    Prop_med_p        = med_result$n.avg.p
+    Exposure      = exposure_var,
+    Mediator      = mediator_var,
+    Outcome       = outcome_var,
+    Profession    = profession,
+    N             = n_size,
+    ACME          = med_result$d.avg,
+    ACME_CI_l     = med_result$d.avg.ci[1],
+    ACME_CI_u     = med_result$d.avg.ci[2],
+    ACME_p        = med_result$d.avg.p,
+    ADE           = med_result$z.avg,
+    ADE_CI_l      = med_result$z.avg.ci[1],
+    ADE_CI_u      = med_result$z.avg.ci[2],
+    ADE_p         = med_result$z.avg.p,
+    Total         = med_result$tau.coef,
+    Total_CI_l    = med_result$tau.ci[1],
+    Total_CI_u    = med_result$tau.ci[2],
+    Total_p       = med_result$tau.p,
+    Prop_mediated = med_result$n.avg,
+    Prop_med_CI_l = med_result$n.avg.ci[1],
+    Prop_med_CI_u = med_result$n.avg.ci[2],
+    Prop_med_p    = med_result$n.avg.p
   )
   
   saveRDS(list(result = out, med_object = med_result), file_path)
