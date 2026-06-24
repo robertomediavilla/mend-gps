@@ -133,7 +133,7 @@ wc_comp_z <- c("wc_demands_z", "wc_hazards_z", "wc_resources_z")
 
 confs_mh <- 
   
-  c("scdm_1_rec_unord", "scdm_2_rec", "wc_demands", "wc_hazards", "wc_resources")
+  c("scdm_1_rec", "scdm_2_rec", "wc_demands", "wc_hazards", "wc_resources")
 
 confs_wc  <- c("scdm_1_rec", "scdm_2_rec")
 ```
@@ -435,6 +435,8 @@ grid_gp <- bind_rows(
 
 grid_nongp <- grid_gp |> mutate(profession = "Non-GP")
 
+grid_doc <- grid_gp |> mutate(profession = "Doctor")
+
 #---- Mediation grids ----
 grid_med_gp <- expand_grid(
   exposure_var = c("wc_demands_z", "wc_hazards_z", "wc_resources_z"),
@@ -453,6 +455,7 @@ grid_med_nongp <- grid_med_gp |> mutate(profession = "Non-GP")
 ```{r filters}
 ds_gp <- ds |> filter(specialty_cat == "Primary Care")
 ds_nongp <- ds |> filter(specialty_cat != "Primary Care")
+ds_doc <- ds |> filter(work_2 == "Doctor")
 ```
 
 ```{r labels}
@@ -948,13 +951,16 @@ run_grid <- function(grid, data) {
 
 results_gp    <- run_grid(grid_gp, ds_gp)
 results_nongp <- run_grid(grid_nongp, ds_nongp)
+results_doc <- run_grid(grid_doc, ds_doc)
 
 results_main <-
   list(
     map_dfr(results_gp,    "multilevel"),
     map_dfr(results_gp,    "robust"),
     map_dfr(results_nongp, "multilevel"),
-    map_dfr(results_nongp, "robust")
+    map_dfr(results_nongp, "robust"),
+    map_dfr(results_doc, "multilevel"),
+    map_dfr(results_doc, "robust")
   ) |>
   bind_rows()
 
