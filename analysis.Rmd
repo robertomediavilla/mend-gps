@@ -1,5 +1,5 @@
 ---
-title: "analysis"
+title: "MeND GPs - Preliminary analyses"
 output: html_document
 ---
 
@@ -64,8 +64,10 @@ expend <- # health expenditure
 
 scdm <- c("scdm_1_rec",
           "scdm_2_rec",
+          "scdm_4",
           "work_1",
-          "work_7")
+          "work_7",
+          "work_5")
 
 mh_dic <- c("phq_co", "gad_co")
 mh_sc <- c("phqads_sc", "phqads_z")
@@ -183,7 +185,11 @@ country_coverage <-
   summarise(n = n(), .by = "loc_2") |> 
   left_join(macro_ds, by = "loc_2") |> 
   mutate(coverage = n/gp_n*100) |> 
-  select(loc_2, n, gp_n, coverage)
+  mutate(
+    coverage_prop = coverage / 100,  # Convert % to decimal
+    w_country = 1 / coverage_prop
+  ) |> 
+  select(loc_2, n, gp_n, coverage, coverage_prop, w_country)
 ```
 
 ```{r process ds}
@@ -395,7 +401,15 @@ ds <- ds |>
   )
 
 #---- 8. Join macro variables ----
-ds <- left_join(ds, macro_ds |> select(loc_2, all_of(macro_vv)), by = "loc_2")
+ds <- 
+  
+  left_join(
+    ds, 
+    macro_ds |> select(loc_2, all_of(macro_vv)), 
+    by = "loc_2") |> 
+  left_join(
+    country_coverage |> select(loc_2, w_country, coverage), 
+    by = "loc_2")
 ```
 
 ```{r grids}
@@ -441,344 +455,31 @@ ds_gp <- ds |> filter(specialty_cat == "Primary Care")
 ds_nongp <- ds |> filter(specialty_cat != "Primary Care")
 ```
 
-```{r preprocess OLD, eval = FALSE}
-
-# Some responses are too long
-
-ds <- 
-  
-  ds  |> 
-  mutate(work_7 = fct_recode(
-    work_7,
-    "Public and private sectors" = 
-      "I work in both the public sector and in the private sector (or I work in the public sector and I am self-employed)",
-    "Private sector only" = 
-      "I work in the private healthcare sector only (I do not work in the public sector)",
-    "Public sector only" = 
-      "I work in the public healthcare sector only (I do not work in the private sector, nor am I self-employed)"
-  ))
-
-
-ds <- 
-  
-  ds |> 
-  mutate(scdm_1 = fct_recode(scdm_1, "Under 20" = "Less than 20 years old"))
-
-
-ds <- 
-  
-  ds |> 
-  mutate(work_5 = fct_recode(
-    work_5,
-    "Extra-hospital emergencies" = 
-      "Emergency care outside hospital (e.g., ambulance)",
-    "In-hospital care" = 
-      "Inpatient care (hospital services)",
-    "Outpatient primary care" = 
-      "Primary care (outpatient services)",
-    "Outpatient secondary care" =
-      "Secondary care (outpatient services)"
-  ))
-
-
-ds <- 
-  
-  ds |> 
-  mutate(work_5_rec = fct_collapse( 
-    work_5,
-    "Inpatient" = c("Emergency department",
-                    "In-hospital care"),
-    "Outpatient" = c("Outpatient primary care",
-                     "Outpatient secondary care"),
-    "Other" = c("Extra-hospital emergencies",
-                "Other")
-    )
-  )
-
-ds <- 
-  
-  ds |> 
-  mutate(work_11 = fct_recode(
-    work_11,
-    "Daily" = 
-      "Every day",
-    "Almost daily" = 
-      "At least 4 days a week, but not every day",
-    "2-3 days/week" = 
-      "2 or 3 days a week",
-    "Almost weekly" = 
-      "Almost every week",
-    "1-2 times/month" =
-      "Once or twice a month",
-    "Less than monthly" =
-    "Less than once a month",
-    "Never/Rarely" = 
-      "Never or very rarely (e.g., once or twice a year)"
-  ))
-
-
-ds <- 
-  
-  ds |> 
-  mutate(work_8 = fct_recode(
-    work_8,
-    "< 11 h" = 
-      "Less than 11 hours",
-    "11-20 h" = 
-      "11-20 hours",
-    "21-30 h" = 
-      "21-30 hours",
-    "31-40 h" = 
-      "31-40 hours",
-    "41-50 h" =
-      "41-50 hours",
-    "51-60 h" = 
-      "51-60 hours",
-    "61-70 h" = 
-      "61-70 hours",
-    "> 70 h" = 
-      "More than 70 hours"
-  ))
-
-# Some variables and exposures require processing
-
-ds <- 
-  
-  ds |> 
-  
-  # Recode household composition 
-  
-  mutate(scdm_5_dic = case_when(
-    str_detect(scdm_5, "with children") ~ "Has children",
-    str_detect(scdm_5, "without children") ~ "No children",
-    TRUE ~ NA
-    ),
-    scdm_5_dic = factor(scdm_5_dic,
-                        levels = c("Has children", "No children"),
-                        ordered = FALSE)
-  ) |>
-  
-  # recode length of service
-  
-  mutate(work_3_rec = fct_collapse(
-    work_3,
-    "5 years or less" = c("Less than 1 year", "1-3 years", "4-5 years"),
-    "More than 10 years" = c("11-20 years", "21-30 years", "31-40 years",
-                             "More than 40 years")
-    )
-  ) |> 
-  
-  # Recode number of job positions
-  
-  mutate(
-    work_4_dic = if_else(work_4 == "One",
-                         "One",
-                         "More than one"),
-    work_4_dic = factor(work_4_dic,
-                        levels = c("One", "More than one"))
-  ) |> 
-  
-  # Recode weekly working hours
-  
-  mutate(
-    work_8_dic = case_when(as.numeric(work_8) <= 5 ~ "No", # <= 50h
-                           as.numeric(work_8) > 5 ~ "Yes"), # > 50h
-    work_8_dic = factor(work_8_dic, levels = c("No", "Yes"))
-  ) |> 
-  
-  # Recode frequency of night work
-  
-  mutate(
-    work_11_dic = 
-      case_when(as.numeric(work_11) > 5 ~ "No", # 1 or 2x a month or less
-                as.numeric(work_11) <= 5 ~ "Yes"), # Almost every week and more
-    work_11_dic = factor(work_11_dic, levels = c("No", "Yes")),
-    work_11 = fct_rev(work_11)
-  ) |> 
-  
-  # name var for shifts
-  
-  mutate(work_12_dic = factor(work_12, levels = c("No", "Yes"))
-  ) |> 
-  
-  # create dichotomous var for contract type
-  
-  mutate(work_16_dic = fct_recode(work_16,
-                                  "Yes" = "Temporary contract",
-                                  "No" = "Fixed contract"),
-         work_16_dic = factor(work_16_dic,
-                              levels = c("No", "Yes"),
-                              ordered = FALSE)
-  ) |> 
-  
-  # recode managing patient anger
-  
-  mutate(
-    across(
-      all_of(c("work_23", "work_24")),
-      ~ factor(
-        fct_collapse(.x,
-                     "Yes" = c("Around 1/4 of the time",
-                               "Around half of the time",
-                               "Around 3/4 of the time",
-                               "Almost all of the time",
-                               "All of the time"),
-                     "No" = c("Never",
-                              "Almost never")),
-                     levels = c("No", "Yes"),
-                     ordered = FALSE),
-        .names = "{.col}_dic"
-        )
-      ) |> 
-  
-  # recode violence
-  
-   mutate(
-    across(
-      all_of(hazards),
-      ~ factor(
-        fct_collapse(.x,
-                     "Yes" = c("Yes, daily", 
-                             "Yes, weekly", 
-                             "Yes, monthly", 
-                             "Yes, a few times"),
-                     "No" = "No"
-        ),
-        levels = c("No", "Yes"), ordered = FALSE
-      ),
-      .names = "{.col}_dic"
-    )
-  ) |>
-  
-  # Recode protocols, drop "Do not know", ensure factor levels
- 
-   mutate(
-    across(
-      all_of(protocols),
-      ~ fct_recode(.x, NULL = "Do not know"),
-      .names = "{.col}_dic"
-    )
-  ) |> 
-
-  # relevel protocols
-
-  mutate(
-    across(
-      all_of(protocols_dic),
-      ~ fct_relevel(.x, "No")
-    )
-  ) |> 
-  
-  # recode job resources
-  
-  mutate(
-    across(
-      all_of(c("work_19", "work_20", "work_21", "work_22")),
-      ~ factor(
-        fct_collapse(.x,
-                     "No" = c("Sometimes", "Seldom", "Never / Hardly ever"),
-                     "Yes" = c("Always", "Often"),
-        ),
-        levels = c("No", "Yes"), ordered = FALSE
-      ),
-      .names = "{col}_dic"
-    )
-  ) |> 
-  
-  # recode work-life balance
-  
-  mutate(
-    work_34_dic = case_when(as.numeric(work_34) <= 3 ~ "No",
-                            as.numeric(work_34) > 3 ~ "Yes"),
-    work_34_dic = factor(work_34_dic, levels = c("No", "Yes"))
-  ) |> 
-  
-  # create numeric variables
-  
-  mutate(
-    across(
-      all_of(hazards),
-      ~ case_when(
-        .x == "No"                ~ 0,
-        .x == "Yes, a few times"  ~ 1,
-        .x == "Yes, monthly"      ~ 2,
-        .x == "Yes, weekly"       ~ 3,
-        .x == "Yes, daily"        ~ 4,
-        TRUE                      ~ NA_real_
-        ),
-      .names = "{.col}_num"
-      )
-    ) |> 
-  mutate(
-    across(
-      all_of(demands) & !all_of("work_12"), # work_12 is binary
-      \(x) as.numeric(x) - 1, # 0 as reference
-    .names = "{.col}_num")) |> 
-  mutate(
-    across(
-      all_of(resources),
-      \(x) as.numeric(x) - 1, # 0 as reference
-    .names = "{.col}_num")) |> 
-  
-  # create poisson outcome variables
-
-  mutate(
-    work_18_poi = if_else(work_18 == "Yes", 1, 0) |> as.integer()
-  ) |> 
-  
-  mutate(
-    phqads_sc = phq_sc + gad_sc,
-    phqads_z = 
-      (phqads_sc - mean(phqads_sc, na.rm = TRUE)) / sd(phqads_sc, na.rm = TRUE)
-  )
-
-# Composite WC score
-
-ds <- 
-  
-  ds |> 
-  mutate(
-    wc_demands  = rowSums(across(all_of(demands_num)),  na.rm = FALSE),
-    wc_hazards  = rowSums(across(all_of(hazards_num)),  na.rm = FALSE),
-    wc_resources = rowSums(
-      across(all_of(resources_num), ~ max(.x, na.rm = TRUE) - .x), # reverse
-      na.rm = FALSE
-    )
-  ) |> 
-  mutate(
-    wc_demands_z  = 
-      (wc_demands  - mean(wc_demands,  na.rm = TRUE)) / 
-      sd(wc_demands,  na.rm = TRUE),
-    wc_hazards_z  = 
-      (wc_hazards  - mean(wc_hazards,  na.rm = TRUE)) / 
-      sd(wc_hazards,  na.rm = TRUE),
-    wc_resources_z = 
-      (wc_resources - mean(wc_resources, na.rm = TRUE)) / 
-      sd(wc_resources, na.rm = TRUE)
-  )
-
-ds <- 
-  
-  ds |> 
-  mutate(
-    scdm_1_rec_num = case_when(scdm_1_rec == "<30"   ~ "1",
-                               scdm_1_rec == "30-39" ~ "2",
-                               scdm_1_rec == "40-49" ~ "3",
-                               scdm_1_rec == "50-59" ~ "4",
-                               scdm_1_rec == "60+"   ~ "5",
-                               TRUE                  ~ scdm_1_rec
-                               ) |> as.integer(),
-    scdm_1_rec_unord = factor(scdm_1_rec, 
-                              ordered = FALSE,
-                              levels = c("50-59", # reference, lower ITL
-                                         "<30",
-                                         "30-39",
-                                         "40-49",
-                                         "60+"))
-    )
+```{r labels}
+#TODO: add variable labels
 ```
 
-# Coverage
+# Descriptive analyses
+
+## Individual level
+
+```{r}
+ds_gp |> 
+  select(all_of(scdm), work_18) |> 
+  tbl_summary(by = "work_18")
+
+ds_gp |> 
+  select(all_of(c(mh_sc, mh_dic)), work_18) |> 
+  tbl_summary(by = "work_18")
+
+ds |> 
+  select(all_of(all_wc), work_18) |> 
+  tbl_summary(by = "work_18")
+```
+
+## Country level
+
+## Coverage
 
 ```{r coverage}
 country_coverage |> 
@@ -787,207 +488,443 @@ country_coverage |>
   geom_text(aes(label = n), vjust = -0.5)
 ```
 
-# Macro
+## Working conditions
+
+These trends are weighted by coverage, whereby countries with higher
+response rates contribute more to the slope. I'll follow the same logic
+in models below, which has implications for interpretation.
 
 ```{r gp 100k}
-plot_df <- ds |>
-  filter(specialty_cat == "Primary Care") |>
-  left_join(macro_ds, by = "loc_2") |>
-  drop_na(gp_100k) |> 
-  mutate(loc_2 = fct_reorder(loc_2, gp_100k))
-
-# linear rescale of gp_100k 
-rng_phq <- range(plot_df$phq_sc, na.rm = TRUE)
-rng_gp  <- range(plot_df$gp_100k, na.rm = TRUE)
-b <- diff(rng_phq) / diff(rng_gp)
-a <- rng_phq[1] - rng_gp[1] * b
+#---- Demands ----
+rng_wc <- range(ds_gp$wc_demands, na.rm = TRUE)
+rng_gp  <- range(ds_gp$gp_100k, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
 
 p1 <- 
   
-  plot_df |>
-  filter(!loc_2 %in% c("Poland", "Portugal")) |> 
-  group_by(loc_2, gp_100k) |>
-  summarise(mean_phq = mean(phq_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
-  ggplot(aes(x = gp_100k, y = mean_phq)) +
-  geom_point(aes(size = n)) +
-  geom_smooth(method = "lm", se = TRUE) +
-  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
-  theme_minimal()
-
-# linear rescale of gp_100k
-rng_gad <- range(plot_df$gad_sc, na.rm = TRUE)
-rng_gp  <- range(plot_df$gp_100k, na.rm = TRUE)
-b <- diff(rng_gad) / diff(rng_gp)
-a <- rng_gad[1] - rng_gp[1] * b
-
-p2 <- 
-  
-  plot_df |>
-  filter(!loc_2 %in% c("Poland", "Portugal")) |> 
-  group_by(loc_2, gp_100k) |>
-  summarise(mean_gad = mean(gad_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
-  ggplot(aes(x = gp_100k, y = mean_gad)) +
-  geom_point(aes(size = n)) +
-  geom_smooth(method = "lm", se = TRUE) +
-  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
-  theme_minimal()
-
-p1/p2
-```
-
-```{r gp prop}
-plot_df <- ds |>
-  filter(specialty_cat == "Primary Care") |>
-  left_join(macro_ds, by = "loc_2") |>
-  drop_na(gp_prop) |> 
-  mutate(loc_2 = fct_reorder(loc_2, gp_prop))
-
-# linear rescale of gp_prop 
-rng_phq <- range(plot_df$phq_sc, na.rm = TRUE)
-rng_gp  <- range(plot_df$gp_prop, na.rm = TRUE)
-b <- diff(rng_phq) / diff(rng_gp)
-a <- rng_phq[1] - rng_gp[1] * b
-
-p1 <- 
-  
-  plot_df |>
-  filter(!loc_2 %in% c("Poland", "Portugal")) |> 
-  group_by(loc_2, gp_prop) |>
-  summarise(mean_phq = mean(phq_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
-  ggplot(aes(x = gp_prop, y = mean_phq)) +
-  geom_point(aes(size = n)) +
-  geom_smooth(method = "lm", se = TRUE) +
-  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
-  theme_minimal()
-
-# linear rescale of gp_prop
-rng_gad <- range(plot_df$gad_sc, na.rm = TRUE)
-rng_gp  <- range(plot_df$gp_prop, na.rm = TRUE)
-b <- diff(rng_gad) / diff(rng_gp)
-a <- rng_gad[1] - rng_gp[1] * b
-
-p2 <- 
-  
-  plot_df |>
-  filter(!loc_2 %in% c("Poland", "Portugal")) |> 
-  group_by(loc_2, gp_prop) |>
-  summarise(mean_gad = mean(gad_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
-  ggplot(aes(x = gp_prop, y = mean_gad)) +
-  geom_point(aes(size = n)) +
-  geom_smooth(method = "lm", se = TRUE) +
-  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
-  theme_minimal()
-
-p1/p2
-```
-
-```{r expend}
-plot_df <- ds |>
-  filter(specialty_cat == "Primary Care") |>
-  left_join(macro_ds, by = "loc_2") |>
-  drop_na(euro_per_inh) |> 
-  mutate(loc_2 = fct_reorder(loc_2, euro_per_inh))
-
-# linear rescale of euro_per_inh 
-rng_phq <- range(plot_df$phq_sc, na.rm = TRUE)
-rng_gp  <- range(plot_df$euro_per_inh, na.rm = TRUE)
-b <- diff(rng_phq) / diff(rng_gp)
-a <- rng_phq[1] - rng_gp[1] * b
-
-p1 <- 
-  
-  plot_df |>
-  group_by(loc_2, euro_per_inh) |>
-  summarise(mean_phq = mean(phq_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
-  ggplot(aes(x = euro_per_inh, y = mean_phq)) +
-  geom_point(aes(size = n)) +
-  geom_smooth(method = "lm", se = TRUE) +
-  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
-  theme_minimal()
-
-# linear rescale of euro_per_inh
-rng_gad <- range(plot_df$gad_sc, na.rm = TRUE)
-rng_gp  <- range(plot_df$euro_per_inh, na.rm = TRUE)
-b <- diff(rng_gad) / diff(rng_gp)
-a <- rng_gad[1] - rng_gp[1] * b
-
-p2 <- 
-  
-  plot_df |>
-  group_by(loc_2, euro_per_inh) |>
-  summarise(mean_gad = mean(gad_sc, na.rm = TRUE), n = n(), .groups = "drop") |>
-  ggplot(aes(x = euro_per_inh, y = mean_gad)) +
-  geom_point(aes(size = n)) +
-  geom_smooth(method = "lm", se = TRUE) +
-  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
-  theme_minimal()
-
-p1/p2
-```
-
-## turnover
-
-```{r}
-plot_df <- ds |>
-  filter(specialty_cat == "Primary Care") |>
-  left_join(macro_ds, by = "loc_2") |>
-  drop_na(euro_per_inh) |> 
-  mutate(loc_2 = fct_reorder(loc_2, euro_per_inh))
-
-
-p1 <- 
-  
-  plot_df |>
-  group_by(loc_2, euro_per_inh) |>
+  ds_gp |> 
+  group_by(loc_2, gp_100k, coverage) |>
   summarise(
-    work_18_prop = mean(work_18 == "Yes", na.rm = TRUE),
-    n = n(), 
+    mean_wc = mean(wc_demands, na.rm = TRUE), 
+    n = n(),
     .groups = "drop") |>
-  ggplot(aes(x = euro_per_inh, y = work_18_prop)) +
-  geom_point(aes(size = n)) +
-  geom_smooth(method = "lm", se = TRUE) +
-  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
-  theme_minimal()
+  ggplot(aes(x = gp_100k, y = mean_wc)) +
+  geom_point(aes(size = coverage)) +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() + 
+  labs(title = "A",
+       y = "Job demands (composite)",
+       x = "Number of family doctors per 100,000 inhabitants",
+       size = "Coverage (%)")
+
+#---- Hazards----
+rng_wc <- range(ds_gp$wc_hazards, na.rm = TRUE)
+rng_gp  <- range(ds_gp$gp_100k, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
 
 p2 <- 
   
-  plot_df |>
-  group_by(loc_2, gp_100k) |>
+  ds_gp |> 
+  group_by(loc_2, gp_100k, coverage) |>
   summarise(
-    work_18_prop = mean(work_18 == "Yes", na.rm = TRUE),
-    n = n(), 
+    mean_wc = mean(wc_hazards, na.rm = TRUE), 
+    n = n(),
     .groups = "drop") |>
-  ggplot(aes(x = gp_100k, y = work_18_prop)) +
-  geom_point(aes(size = n)) +
-  geom_smooth(method = "lm", se = TRUE) +
-  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
-  theme_minimal()
+  ggplot(aes(x = gp_100k, y = mean_wc)) +
+  geom_point(aes(size = coverage)) +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(
+    title = "B",
+    y = "Job hazards (composite)",
+    x = "Number of family doctors per 100,000 inhabitants",
+    size = "Coverage (%)"
+    )
+
+#---- Resources ----
+rng_wc <- range(ds_gp$wc_resources, na.rm = TRUE)
+rng_gp  <- range(ds_gp$gp_100k, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
 
 p3 <- 
   
-  plot_df |>
-  group_by(loc_2, gp_prop) |>
+  ds_gp |> 
+  group_by(loc_2, gp_100k, coverage) |>
   summarise(
-    work_18_prop = mean(work_18 == "Yes", na.rm = TRUE),
-    n = n(), 
+    mean_wc = mean(wc_resources, na.rm = TRUE), 
+    n = n(),
     .groups = "drop") |>
-  ggplot(aes(x = gp_prop, y = work_18_prop)) +
-  geom_point(aes(size = n)) +
-  geom_smooth(method = "lm", se = TRUE) +
+  ggplot(aes(x = gp_100k, y = mean_wc)) +
+  geom_point(aes(size = coverage)) +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(
+    title = "C",
+    y = "Job resources (composite, reverse)",
+    x = "Number of family doctors per 100,000 inhabitants",
+    size = "Coverage (%)"
+    )
+
+#---- Save & Display ----
+
+wc_density_plot <- ggpubr::ggarrange(p1, p2, p3)
+```
+
+```{r gp prop}
+#---- Demands ----
+rng_wc <- range(ds_gp$wc_demands, na.rm = TRUE)
+rng_gp  <- range(ds_gp$gp_prop, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
+
+p1 <- 
+  
+  ds_gp |> 
+  group_by(loc_2, gp_prop, coverage) |>
+  summarise(
+    mean_wc = mean(wc_demands, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = gp_prop, y = mean_wc)) +
+  geom_point(aes(size = coverage)) +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +
   ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
-  theme_minimal()
+  theme_minimal() + 
+  labs(title = "A",
+       y = "Job demands (composite)",
+       x = "Proportion of family doctors",
+       size = "Coverage (%)")
 
+#---- Hazards----
+rng_wc <- range(ds_gp$wc_hazards, na.rm = TRUE)
+rng_gp  <- range(ds_gp$gp_prop, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
 
+p2 <- 
+  
+  ds_gp |> 
+  group_by(loc_2, gp_prop, coverage) |>
+  summarise(
+    mean_wc = mean(wc_hazards, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = gp_prop, y = mean_wc)) +
+  geom_point(aes(size = coverage)) +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(
+    title = "B",
+    y = "Job hazards (composite)",
+    x = "Proportion of family doctors",
+    size = "Coverage (%)"
+    )
 
-p1/p2/p3
+#---- Resources ----
+rng_wc <- range(ds_gp$wc_resources, na.rm = TRUE)
+rng_gp  <- range(ds_gp$gp_prop, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
 
+p3 <- 
+  
+  ds_gp |> 
+  group_by(loc_2, gp_prop, coverage) |>
+  summarise(
+    mean_wc = mean(wc_resources, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = gp_prop, y = mean_wc)) +
+  geom_point(aes(size = coverage)) +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(
+    title = "C",
+    y = "Job resources (composite, reverse)",
+    x = "Proportion of family doctors",
+    size = "Coverage (%)"
+    )
+
+#---- Save & Display ----
+
+wc_prop_plot <- ggpubr::ggarrange(p1, p2, p3)
+```
+
+```{r gp expend}
+#---- Demands ----
+rng_wc <- range(ds_gp$wc_demands, na.rm = TRUE)
+rng_gp  <- range(ds_gp$euro_per_inh, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
+
+p1 <- 
+  
+  ds_gp |> 
+  group_by(loc_2, euro_per_inh, coverage) |>
+  summarise(
+    mean_wc = mean(wc_demands, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = euro_per_inh, y = mean_wc)) +
+  geom_point(aes(size = coverage)) +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() + 
+  labs(title = "A",
+       y = "Job demands (composite)",
+       x = "Health expenditure (all providers, Euro per inhabitant)",
+       size = "Coverage (%)")
+
+#---- Hazards----
+rng_wc <- range(ds_gp$wc_hazards, na.rm = TRUE)
+rng_gp  <- range(ds_gp$euro_per_inh, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
+
+p2 <- 
+  
+  ds_gp |> 
+  group_by(loc_2, euro_per_inh, coverage) |>
+  summarise(
+    mean_wc = mean(wc_hazards, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = euro_per_inh, y = mean_wc)) +
+  geom_point(aes(size = coverage)) +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(
+    title = "B",
+    y = "Job hazards (composite)",
+    x = "Health expenditure (all providers, Euro per inhabitant)",
+    size = "Coverage (%)"
+    )
+
+#---- Resources ----
+rng_wc <- range(ds_gp$wc_resources, na.rm = TRUE)
+rng_gp  <- range(ds_gp$euro_per_inh, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
+
+p3 <- 
+  
+  ds_gp |> 
+  group_by(loc_2, euro_per_inh, coverage) |>
+  summarise(
+    mean_wc = mean(wc_resources, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = euro_per_inh, y = mean_wc)) +
+  geom_point(aes(size = coverage)) +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(
+    title = "C",
+    y = "Job resources (composite, reverse)",
+    x = "Health expenditure (all providers, Euro per inhabitant)",
+    size = "Coverage (%)"
+    )
+
+#---- Save & Display ----
+
+wc_expend_plot <- ggpubr::ggarrange(p1, p2, p3)
+```
+
+## Turnover intentions
+
+```{r turn eco}
+p1 <- 
+  ds_gp |> 
+  group_by(loc_2, gp_100k, coverage) |>
+  summarise(
+    n_turnover = sum(work_18 == "Yes", na.rm = TRUE),
+    n_total = sum(!is.na(work_18)),
+    prop_turnover = n_turnover / n_total,
+    .groups = "drop") |>
+  mutate(
+    # Wilson score CI for proportions
+    ci_lower = map2_dbl(n_turnover, n_total, 
+                        ~prop.test(.x, .y)$conf.int[1]),
+    ci_upper = map2_dbl(n_turnover, n_total, 
+                        ~prop.test(.x, .y)$conf.int[2])
+  ) |>
+  ggplot(aes(x = gp_100k, y = prop_turnover)) +
+  geom_point(aes(size = coverage), alpha = 0.6) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper, width = 0.02), 
+                alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(title = "A",
+       y = "Intention to leave (%)",
+       x = "Number of family doctors per 100,000 inhabitants",
+       size = "Coverage (%)")
+
+p2 <- 
+  ds_gp |> 
+  group_by(loc_2, gp_prop, coverage) |>
+  summarise(
+    n_turnover = sum(work_18 == "Yes", na.rm = TRUE),
+    n_total = sum(!is.na(work_18)),
+    prop_turnover = n_turnover / n_total,
+    .groups = "drop") |>
+  mutate(
+    # Wilson score CI for proportions
+    ci_lower = map2_dbl(n_turnover, n_total, 
+                        ~prop.test(.x, .y)$conf.int[1]),
+    ci_upper = map2_dbl(n_turnover, n_total, 
+                        ~prop.test(.x, .y)$conf.int[2])
+  ) |>
+  ggplot(aes(x = gp_prop, y = prop_turnover)) +
+  geom_point(aes(size = coverage), alpha = 0.6) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper, width = 0.02), 
+                alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(title = "B",
+       y = "Intention to leave (%)",
+       x = "Proportion of family doctors",
+       size = "Coverage (%)")
+
+p3 <- 
+  ds_gp |> 
+  group_by(loc_2, euro_per_inh, coverage) |>
+  summarise(
+    n_turnover = sum(work_18 == "Yes", na.rm = TRUE),
+    n_total = sum(!is.na(work_18)),
+    prop_turnover = n_turnover / n_total,
+    .groups = "drop") |>
+  mutate(
+    # Wilson score CI for proportions
+    ci_lower = map2_dbl(n_turnover, n_total, 
+                        ~prop.test(.x, .y)$conf.int[1]),
+    ci_upper = map2_dbl(n_turnover, n_total, 
+                        ~prop.test(.x, .y)$conf.int[2])
+  ) |>
+  ggplot(aes(x = euro_per_inh, y = prop_turnover)) +
+  geom_point(aes(size = coverage), alpha = 0.6) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper, width = 0.02), 
+                alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(title = "C",
+       y = "Intention to leave (%)",
+       x = "Health expenditure (all providers, Euro per inhabitant)",
+       size = "Coverage (%)")
+
+turn_eco_plot <- ggarrange(p1, p2, p3)
 ```
 
 # Models
 
 ## Main
 
-```{r run main}
+```{r run main, eval = FALSE}
 run_grid <- function(grid, data) {
   pmap(grid, function(outcome_var, exposure_var, confounder_key,
                       profession, cluster_var, family_type, model_label) {
@@ -1024,9 +961,14 @@ results_main <-
 saveRDS(results_main, "out/models/summary/results_main.rds")
 ```
 
-# Mediation
+```{r}
+results_main <- readRDS("out/models/summary/results_main.rds")
+#TODO: create ft
+```
 
-```{r run med}
+## Mediation
+
+```{r run med, eval = FALSE}
 #---- Run mediation ----
 run_grid_med <- function(grid, data, sims = 1000) {
   pmap(grid, function(exposure_var, mediator_var, outcome_var,
@@ -1060,6 +1002,9 @@ saveRDS(results_med, "out/models/summary/results_med.rds")
 ```
 
 ```{r med tbl}
+results_med <- readRDS("out/models/summary/results_med.rds")
+
+
 #---- GP mediation table ----
 fmt_ci <- function(est, lo, hi, mult = 100, digits = 1) {
   sprintf(paste0("%.", digits, "f (%.", digits, "f, %.", digits, "f)"),
@@ -1166,3 +1111,38 @@ mediator also in the model structure, whereas the main-model PR comes
 from a Poisson model without the mediator. They won't reconcile to
 arbitrary precision, but they should be in the same ballpark, and they
 are.
+
+## Ecological
+
+Descriptive aggregate models for the macro layer of the funnel. n \~= 29
+countries -\> parameters are expensive. We fit a linear and a quadratic
+(raw poly, so coefficients stay interpretable and the models are exactly
+nested), compare them, and check whether any curvature is driven by
+high-leverage countries before recommending the quadratic.
+
+IMPORTANT: these are ecological associations (vulnerable to the
+ecological fallacy). They are companions to the scatterplots, NOT a
+substitute for the individual-level multilevel models.
+
+Consistency rule: the fitted model must match what geom_smooth draws.
+linear -\> geom_smooth(method = "lm", formula = y \~ x, aes(weight =
+coverage)) quadratic -\> geom_smooth(method = "lm", formula = y \~
+poly(x, 2, raw = TRUE), aes(weight = coverage))
+
+```{r expl eco}
+eco_grid <- tidyr::expand_grid(
+  predictor    = c("gp_100k", "gp_prop", "euro_per_inh"),
+  tibble::tibble(
+    outcome      = c("wc_demands", "wc_hazards", "wc_resources", "work_18"),
+    outcome_type = c("continuous", "continuous", "continuous", "proportion")
+  )
+)
+
+eco_gp <- run_grid_ecological(ds_gp, eco_grid, label = "gp")
+```
+
+Expenditure shows counterintuitive pattern on turnover; the rest are
+expected -they might show tentative associations through other channels.
+
+IMPORTANT: Act on WCs, on specific WCs, and on MH, not that much on
+proportions or densities -actually more actionable

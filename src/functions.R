@@ -350,3 +350,222 @@ run_mediation <- function(data, exposure_var, mediator_var, outcome_var,
   
   return(out)
 }
+
+#---- Aggregation helper ----
+
+# Collapse individual-level data to one row per country. predictor and
+# weight_var vary only at country level, so they are carried through the
+# grouping unchanged. For proportion outcomes we also keep n / n_pos so a
+# binomial model could be fit later if desired.
+
+aggregate_country <-
+  
+  function(data,
+           outcome,
+           predictor,
+           weight_var = "coverage",
+           outcome_type = c("continuous", "proportion"),
+           positive_level = "Yes") {
+    
+    outcome_type <- match.arg(outcome_type)
+    
+    base <-
+      data |>
+      dplyr::group_by(loc_2,
+                      .pred = .data[[predictor]],
+                      .wt   = .data[[weight_var]])
+    
+    if (outcome_type == "continuous") {
+      
+      out <-
+        base |>
+        dplyr::summarise(
+          y    = mean(.data[[outcome]], na.rm = TRUE),
+          n    = sum(!is.na(.data[[outcome]])),
+          .groups = "drop"
+        )
+      
+    } else {
+      
+      out <-
+        base |>
+        dplyr::summarise(
+          n     = sum(!is.na(.data[[outcome]])),
+          n_pos = sum(.data[[outcome]] == positive_level, na.rm = TRUE),
+          prop  = n_pos / n,
+          # logit, clamped so 0/1 countries stay finite
+          y     = stats::qlogis(pmin(pmax(n_pos / n, .01), .99)),
+          .groups = "drop"
+        )
+    }
+    
+    out |>
+      dplyr::rename(!!predictor := .pred,
+                    !!weight_var := .wt) |>
+      dplyr::filter(!is.na(.data[[predictor]]),
+                    !is.na(.data[[weight_var]]),
+                    !is.na(y))
+  }
+
+
+#---- Single ecological model ----
+
+run_ecological <-
+  
+  function(data,
+           outcome,
+           predictor,
+           weight_var      = "coverage",
+           outcome_type    = c("continuous", "proportion"),
+           positive_level  = "Yes",
+           label           = "gp",
+           cache_dir       = "out/models/ecological",
+           overwrite       = FALSE) {
+    
+    outcome_type <- match.arg(outcome_type)
+    
+    #-- cache guard (label keeps GP / non-GP runs from overwriting) --
+    
+    if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+    
+    cache_file <-
+      file.path(cache_dir,
+                paste0("eco_", label, "_", outcome, "_", predictor, ".rds"))
+    
+    if (file.exists(cache_file) && !overwrite) {
+      return(readRDS(cache_file))
+    }
+    
+    #-- aggregate to country level --
+    
+    cdf <-
+      aggregate_country(data, outcome, predictor,
+                        weight_var, outcome_type, positive_level)
+    
+    n_country <- nrow(cdf)
+    
+    #-- fit linear + quadratic (raw poly => interpretable, exactly nested) --
+    
+    f_lin  <- reformulate(predictor, response = "y")
+    f_quad <- reformulate(c(predictor, sprintf("I(%s^2)", predictor)),
+                          response = "y")
+    
+    w <- cdf[[weight_var]]
+    
+    m_lin  <- stats::lm(f_lin,  data = cdf, weights = w)
+    m_quad <- stats::lm(f_quad, data = cdf, weights = w)
+    
+    #-- compare --
+    
+    an     <- stats::anova(m_lin, m_quad)
+    p_aov  <- an$`Pr(>F)`[2]
+    f_aov  <- an$F[2]
+    
+    quad_term <- sprintf("I(%s^2)", predictor)
+    p_term    <- summary(m_quad)$coefficients[quad_term, "Pr(>|t|)"]
+    
+    #-- leverage: is curvature driven by a few countries? --
+    
+    cook  <- stats::cooks.distance(m_quad)
+    infl  <- cdf$loc_2[cook > 4 / n_country]
+    
+    # refit quadratic without influential countries; does the term hold?
+    if (length(infl) > 0 && (n_country - length(infl)) > 4) {
+      cdf_rob <- dplyr::filter(cdf, !loc_2 %in% infl)
+      m_rob   <- stats::lm(f_quad, data = cdf_rob,
+                           weights = cdf_rob[[weight_var]])
+      p_term_rob <- summary(m_rob)$coefficients[quad_term, "Pr(>|t|)"]
+    } else {
+      p_term_rob <- p_term
+    }
+    
+    #-- recommendation: quadratic only if it earns its keep AND survives --
+    
+    recommended <-
+      if (!is.na(p_aov) && p_aov < .05 &&
+          !is.na(p_term_rob) && p_term_rob < .05) {
+        "quadratic"
+      } else {
+        "linear"
+      }
+    
+    #-- SE + 95% CI for the linear slope --
+    
+    se_lin <- summary(m_lin)$coefficients[predictor, "Std. Error"]
+    ci_lin <- stats::confint(m_lin, predictor, level = .95)
+    
+    #-- tidy one-row summary --
+    
+    summary_row <-
+      tibble::tibble(
+        label          = label,
+        outcome        = outcome,
+        predictor      = predictor,
+        outcome_scale  = if (outcome_type == "proportion") "logit" else "mean",
+        n_country      = n_country,
+        beta_linear    = stats::coef(m_lin)[[predictor]],
+        se_linear      = se_lin,
+        ci_lo_linear   = ci_lin[1],
+        ci_hi_linear   = ci_lin[2],
+        p_linear       = summary(m_lin)$coefficients[predictor, "Pr(>|t|)"],
+        adj_r2_linear  = summary(m_lin)$adj.r.squared,
+        adj_r2_quad    = summary(m_quad)$adj.r.squared,
+        f_quad         = f_aov,
+        p_anova        = p_aov,
+        p_quad_term    = p_term,
+        p_quad_robust  = p_term_rob,
+        n_influential  = length(infl),
+        influential    = paste(infl, collapse = ", "),
+        recommended    = recommended
+      )
+    
+    res <-
+      list(
+        summary   = summary_row,
+        country_df = cdf,           # feed straight into ggplot for matching
+        m_linear  = m_lin,
+        m_quad    = m_quad,
+        anova     = an,
+        outcome_type = outcome_type
+      )
+    
+    saveRDS(res, cache_file)
+    res
+  }
+
+
+#---- Grid runner ----
+
+# grid: a tibble with columns outcome, predictor, outcome_type
+#       (positive_level optional, defaults to "Yes" for proportions).
+# Returns the bound one-row summaries; full model objects stay cached on disk
+# and can be re-read per row via run_ecological() (cache hit).
+
+run_grid_ecological <-
+  
+  function(data,
+           grid,
+           weight_var = "coverage",
+           label      = "gp",
+           overwrite  = FALSE) {
+    
+    if (!"positive_level" %in% names(grid)) {
+      grid$positive_level <- "Yes"
+    }
+    
+    purrr::pmap_dfr(
+      grid,
+      function(outcome, predictor, outcome_type, positive_level, ...) {
+        run_ecological(
+          data           = data,
+          outcome        = outcome,
+          predictor      = predictor,
+          weight_var     = weight_var,
+          outcome_type   = outcome_type,
+          positive_level = positive_level,
+          label          = label,
+          overwrite      = overwrite
+        )$summary
+      }
+    )
+  }
