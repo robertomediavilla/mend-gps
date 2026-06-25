@@ -178,18 +178,35 @@ macro_ds <-
 
 #---- Obtain coverage by country ----
 
-country_coverage <- 
+country_coverage_gp <- 
   
   ds |> 
   filter(specialty_cat == "Primary Care") |> 
   summarise(n = n(), .by = "loc_2") |> 
   left_join(macro_ds, by = "loc_2") |> 
-  mutate(coverage = n/gp_n*100) |> 
+  mutate(gp_coverage = n/gp_n*100) |> 
   mutate(
-    coverage_prop = coverage / 100,  # Convert % to decimal
-    w_country = 1 / coverage_prop
+    gp_coverage_prop = gp_coverage / 100,  # Convert % to decimal
+    gp_w_country = 1 / gp_coverage_prop
   ) |> 
-  select(loc_2, n, gp_n, coverage, coverage_prop, w_country)
+  select(loc_2, n, gp_n, gp_coverage, gp_coverage_prop, gp_w_country)
+
+#---- Macro ds for ALL doctors ----
+
+country_coverage_doc <- 
+  
+  ds |> 
+  filter(work_2 == "Doctor") |> 
+  summarise(n = n(), .by = "loc_2") |> 
+  left_join(
+    who_n_loc |> filter(work_2 == "Doctor") |> select(loc_2, value),
+    by = "loc_2"
+  ) |> 
+  left_join(pop_eu_n, by = "loc_2") |> 
+  mutate(
+    doc_coverage = n/value*100,
+    doc_100k = value/pop_n*100000
+  )
 ```
 
 ```{r process ds}
@@ -408,8 +425,12 @@ ds <-
     macro_ds |> select(loc_2, all_of(macro_vv)), 
     by = "loc_2") |> 
   left_join(
-    country_coverage |> select(loc_2, w_country, coverage), 
-    by = "loc_2")
+    country_coverage_gp |> select(loc_2, gp_w_country, gp_coverage), 
+    by = "loc_2") |> 
+  left_join(
+    country_coverage_doc |> select(loc_2, doc_coverage, doc_100k),
+    by = "loc_2"
+  )
 ```
 
 ```{r grids}
@@ -841,6 +862,237 @@ p3 <-
 wc_expend_plot <- ggpubr::ggarrange(p1, p2, p3)
 ```
 
+```{r doc 100k}
+#---- Demands ----
+rng_wc <- range(ds$wc_demands, na.rm = TRUE)
+rng_gp  <- range(ds$doc_100k, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
+
+p1 <- 
+  
+  ds |> 
+  group_by(loc_2, doc_100k, doc_coverage) |>
+  summarise(
+    mean_wc = mean(wc_demands, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = doc_100k, y = mean_wc)) +
+  geom_point(aes(size = doc_coverage)) +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +  
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() + 
+  labs(title = "A",
+       y = "Job demands (composite)",
+       x = "Number of doctors per 100,000 inhabitants",
+       size = "Coverage (%)")
+
+#---- Hazards----
+rng_wc <- range(ds$wc_hazards, na.rm = TRUE)
+rng_gp  <- range(ds$doc_100k, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
+
+p2 <- 
+  
+  ds |> 
+  group_by(loc_2, doc_100k, doc_coverage) |>
+  summarise(
+    mean_wc = mean(wc_hazards, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = doc_100k, y = mean_wc)) +
+  geom_point(aes(size = doc_coverage)) +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +  
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(
+    title = "B",
+    y = "Job hazards (composite)",
+    x = "Number of doctors per 100,000 inhabitants",
+    size = "Coverage (%)"
+    )
+
+#---- Resources ----
+rng_wc <- range(ds$wc_resources, na.rm = TRUE)
+rng_gp  <- range(ds$doc_100k, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
+
+p3 <- 
+  
+  ds |> 
+  group_by(loc_2, doc_100k, doc_coverage) |>
+  summarise(
+    mean_wc = mean(wc_resources, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = doc_100k, y = mean_wc)) +
+  geom_point(aes(size = doc_coverage)) +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +  
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(
+    title = "C",
+    y = "Job resources (composite, reverse)",
+    x = "Number of doctors per 100,000 inhabitants",
+    size = "Coverage (%)"
+    )
+
+#---- Save & Display ----
+
+wc_density_plot_doc <- ggpubr::ggarrange(p1, p2, p3)
+
+```
+
+```{r doc expend}
+#---- Demands ----
+rng_wc <- range(ds$wc_demands, na.rm = TRUE)
+rng_gp  <- range(ds$euro_per_inh, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
+
+p1 <- 
+  
+  ds |> 
+  group_by(loc_2, euro_per_inh, doc_coverage) |>
+  summarise(
+    mean_wc = mean(wc_demands, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = euro_per_inh, y = mean_wc)) +
+  geom_point(aes(size = doc_coverage)) +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() + 
+  labs(title = "A",
+       y = "Job demands (composite)",
+       x = "Health expenditure (all providers, Euro per inhabitant)",
+       size = "Coverage (%)")
+
+#---- Hazards----
+rng_wc <- range(ds$wc_hazards, na.rm = TRUE)
+rng_gp  <- range(ds$euro_per_inh, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
+
+p2 <- 
+  
+  ds |> 
+  group_by(loc_2, euro_per_inh, doc_coverage) |>
+  summarise(
+    mean_wc = mean(wc_hazards, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = euro_per_inh, y = mean_wc)) +
+  geom_point(aes(size = doc_coverage)) +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(
+    title = "B",
+    y = "Job hazards (composite)",
+    x = "Health expenditure (all providers, Euro per inhabitant)",
+    size = "Coverage (%)"
+    )
+
+#---- Resources ----
+rng_wc <- range(ds$wc_resources, na.rm = TRUE)
+rng_gp  <- range(ds$euro_per_inh, na.rm = TRUE)
+b <- diff(rng_wc) / diff(rng_gp)
+a <- rng_wc[1] - rng_gp[1] * b
+
+p3 <- 
+  
+  ds |> 
+  group_by(loc_2, euro_per_inh, doc_coverage) |>
+  summarise(
+    mean_wc = mean(wc_resources, na.rm = TRUE), 
+    n = n(),
+    .groups = "drop") |>
+  ggplot(aes(x = euro_per_inh, y = mean_wc)) +
+  geom_point(aes(size = doc_coverage)) +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "loess", 
+    se = TRUE,
+    fill = "#993926", 
+    color = "#993926") +
+  geom_smooth(
+    aes(weight = doc_coverage),
+    method = "lm", 
+    se = TRUE,
+    fill = "#268699", 
+    color = "#268699") +
+  ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
+  theme_minimal() +
+  labs(
+    title = "C",
+    y = "Job resources (composite, reverse)",
+    x = "Health expenditure (all providers, Euro per inhabitant)",
+    size = "Coverage (%)"
+    )
+
+#---- Save & Display ----
+
+wc_expend_plot_doc <- ggpubr::ggarrange(p1, p2, p3)
+```
+
 ## Turnover intentions
 
 ```{r turn eco}
@@ -1134,7 +1386,7 @@ geom_smooth(method = "lm", formula = y \~ x, aes(weight = coverage)) quadratic
 = coverage))
 
 ```{r expl eco}
-eco_grid <- tidyr::expand_grid(
+eco_grid_gp <- tidyr::expand_grid(
   predictor    = c("gp_100k", "gp_prop", "euro_per_inh"),
   tibble::tibble(
     outcome      = c("wc_demands", "wc_hazards", "wc_resources", "work_18"),
@@ -1142,7 +1394,30 @@ eco_grid <- tidyr::expand_grid(
   )
 )
 
-eco_gp <- run_grid_ecological(ds_gp, eco_grid, label = "gp")
+eco_gp <- run_grid_ecological(data = ds_gp, 
+                              grid = eco_grid_gp,  
+                              weight_var = "gp_coverage",
+                              label = "gp")
+
+eco_grid_doc <- tidyr::expand_grid(
+  predictor    = c("doc_100k", "euro_per_inh"),
+  tibble::tibble(
+    outcome      = c("wc_demands", "wc_hazards", "wc_resources", "work_18"),
+    outcome_type = c("continuous", "continuous", "continuous", "proportion")
+  )
+)
+
+eco_doc <- run_grid_ecological(data = ds, 
+                               grid = eco_grid_doc,  
+                               weight_var = "doc_coverage",
+                               label = "doc")
+
+
+eco_gp_NOPORTUGAL <- run_grid_ecological(data = ds_gp |> filter(loc_2 != "Portugal"), 
+                                         grid = eco_grid_gp,
+                                         weight_var = "gp_coverage",
+                                         label = "gp")
+
 ```
 
 Expenditure shows counterintuitive pattern on turnover; the rest are expected

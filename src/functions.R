@@ -545,7 +545,7 @@ run_grid_ecological <-
   
   function(data,
            grid,
-           weight_var = "coverage",
+           weight_var,
            label      = "gp",
            overwrite  = FALSE) {
     
