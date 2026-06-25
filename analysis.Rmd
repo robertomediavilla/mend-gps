@@ -131,7 +131,7 @@ wc_comp <- c("wc_demands", "wc_hazards", "wc_resources")
 
 wc_comp_z <- c("wc_demands_z", "wc_hazards_z", "wc_resources_z")
 
-confs_mh <- 
+confs_mh <- #TODO: re-think confounder list beyond mediation
   
   c("scdm_1_rec", "scdm_2_rec", "wc_demands", "wc_hazards", "wc_resources")
 
@@ -450,6 +450,8 @@ grid_med_gp <- expand_grid(
   )
 
 grid_med_nongp <- grid_med_gp |> mutate(profession = "Non-GP")
+
+grid_med_doc <- grid_med_gp |> mutate(profession = "Doctor")
 ```
 
 ```{r filters}
@@ -466,7 +468,7 @@ ds_doc <- ds |> filter(work_2 == "Doctor")
 
 ## Individual level
 
-```{r}
+```{r tbls}
 ds_gp |> 
   select(all_of(scdm), work_18) |> 
   tbl_summary(by = "work_18")
@@ -493,9 +495,9 @@ country_coverage |>
 
 ## Working conditions
 
-These trends are weighted by coverage, whereby countries with higher
-response rates contribute more to the slope. I'll follow the same logic
-in models below, which has implications for interpretation.
+These trends are weighted by coverage, whereby countries with higher response
+rates contribute more to the slope. I'll follow the same logic in models below,
+which has implications for interpretation.
 
 ```{r gp 100k}
 #---- Demands ----
@@ -964,11 +966,11 @@ results_main <-
   ) |>
   bind_rows()
 
-saveRDS(results_main, "out/models/summary/results_main.rds")
+saveRDS(results_main, "out/summary/results_main.rds")
 ```
 
-```{r}
-results_main <- readRDS("out/models/summary/results_main.rds")
+```{r ft main}
+results_main <- readRDS("out/summary/results_main.rds")
 #TODO: create ft
 ```
 
@@ -995,21 +997,22 @@ run_grid_med <- function(grid, data, sims = 1000) {
 
 results_med_gp    <- run_grid_med(grid_med_gp,    ds_gp)
 results_med_nongp <- run_grid_med(grid_med_nongp, ds_nongp)
+results_med_doc <- run_grid_med(grid_med_doc, ds_doc)
 
 results_med <-
   list(
     results_med_gp,
-    results_med_nongp
+    results_med_nongp,
+    results_med_doc
   ) |>
   map(~ bind_rows(.x)) |>
   bind_rows()
 
-saveRDS(results_med, "out/models/summary/results_med.rds")
+saveRDS(results_med, "out/summary/results_med.rds")
 ```
 
 ```{r med tbl}
-results_med <- readRDS("out/models/summary/results_med.rds")
-
+results_med <- readRDS("out/summary/results_med.rds")
 
 #---- GP mediation table ----
 fmt_ci <- function(est, lo, hi, mult = 100, digits = 1) {
@@ -1080,60 +1083,55 @@ med_tbl_gp <-
 save_as_docx(med_tbl_gp, path = "out/tables/med_tbl_gp.docx")
 ```
 
-Important distinction here: the closest value isn't an exact match to
-anything in results_main, and it's worth being precise about why. The
-scales differ. Your main model row 4 gives a prevalence ratio of 1.49 —
-multiplicative, "demands raise turnover risk by 49% per SD." The
-mediation Total of \~4.0 pp is additive, "demands raise the absolute
-probability of turnover by 4 percentage points per SD." These describe
-the same association but on different scales, so they will never be
-numerically equal. Which mediation row corresponds to that PR. The
-relevant comparison is the mediation row with the same exposure and the
-same confounder set. Your main model row 4 (wc_demands_z, GP, fully
-adjusted with confs_wc = age + sex) corresponds to the demands rows in
-the mediation table. But there are three of them (4.0, 4.7, 4.6), one
-per mediator — and here's the subtle point: the Total effect should be
-identical across all three, because the total effect of demands on
-turnover does not depend on which mediator you chose. The small
-differences (4.0 vs 4.7 vs 4.6) come entirely from the analytic sample
-changing via listwise deletion — each mediation model drops rows missing
-that particular mediator, and PHQ-9/GAD-7 caseness have different
-missingness than the continuous PHQ-ADS. So the honest answer: all three
-are estimating the same total effect of demands; they differ only
-because of differing N. The PHQ-ADS row (4.0 pp, N = 8027) is on the
-largest, most complete sample, so it's the most stable estimate of the
-demands total effect. To actually verify the two analyses agree, don't
-compare the PR to the pp directly. Instead, convert. Your main model
-also reports a baseline risk you can use: for a binary exposure like
-phq_co you have Risk_Unexp = 6.4% and Risk_Exp = 14.4%, a difference of
-8 pp on the response scale. For the continuous wc_demands_z the PR is
-1.49, and at a baseline turnover risk of roughly 8–9% in GPs, a 49%
-multiplicative increase per SD works out to roughly 4 pp on the absolute
-scale — which lands right on your mediation Total of 4.0. That
-back-of-envelope reconciliation is the check that the two pipelines are
-telling a consistent story. One caveat worth stating in the methods: the
-mediation Total comes from a glmer Poisson outcome model with the
-mediator also in the model structure, whereas the main-model PR comes
-from a Poisson model without the mediator. They won't reconcile to
-arbitrary precision, but they should be in the same ballpark, and they
-are.
+Important distinction here: the closest value isn't an exact match to anything
+in results_main, and it's worth being precise about why. The scales differ. Your
+main model row 4 gives a prevalence ratio of 1.49 — multiplicative, "demands
+raise turnover risk by 49% per SD." The mediation Total of \~4.0 pp is additive,
+"demands raise the absolute probability of turnover by 4 percentage points per
+SD." These describe the same association but on different scales, so they will
+never be numerically equal. Which mediation row corresponds to that PR. The
+relevant comparison is the mediation row with the same exposure and the same
+confounder set. Your main model row 4 (wc_demands_z, GP, fully adjusted with
+confs_wc = age + sex) corresponds to the demands rows in the mediation table.
+But there are three of them (4.0, 4.7, 4.6), one per mediator — and here's the
+subtle point: the Total effect should be identical across all three, because the
+total effect of demands on turnover does not depend on which mediator you chose.
+The small differences (4.0 vs 4.7 vs 4.6) come entirely from the analytic sample
+changing via listwise deletion — each mediation model drops rows missing that
+particular mediator, and PHQ-9/GAD-7 caseness have different missingness than
+the continuous PHQ-ADS. So the honest answer: all three are estimating the same
+total effect of demands; they differ only because of differing N. The PHQ-ADS
+row (4.0 pp, N = 8027) is on the largest, most complete sample, so it's the most
+stable estimate of the demands total effect. To actually verify the two analyses
+agree, don't compare the PR to the pp directly. Instead, convert. Your main
+model also reports a baseline risk you can use: for a binary exposure like
+phq_co you have Risk_Unexp = 6.4% and Risk_Exp = 14.4%, a difference of 8 pp on
+the response scale. For the continuous wc_demands_z the PR is 1.49, and at a
+baseline turnover risk of roughly 8–9% in GPs, a 49% multiplicative increase per
+SD works out to roughly 4 pp on the absolute scale — which lands right on your
+mediation Total of 4.0. That back-of-envelope reconciliation is the check that
+the two pipelines are telling a consistent story. One caveat worth stating in
+the methods: the mediation Total comes from a glmer Poisson outcome model with
+the mediator also in the model structure, whereas the main-model PR comes from a
+Poisson model without the mediator. They won't reconcile to arbitrary precision,
+but they should be in the same ballpark, and they are.
 
 ## Ecological
 
 Descriptive aggregate models for the macro layer of the funnel. n \~= 29
-countries -\> parameters are expensive. We fit a linear and a quadratic
-(raw poly, so coefficients stay interpretable and the models are exactly
-nested), compare them, and check whether any curvature is driven by
-high-leverage countries before recommending the quadratic.
+countries -\> parameters are expensive. We fit a linear and a quadratic (raw
+poly, so coefficients stay interpretable and the models are exactly nested),
+compare them, and check whether any curvature is driven by high-leverage
+countries before recommending the quadratic.
 
-IMPORTANT: these are ecological associations (vulnerable to the
-ecological fallacy). They are companions to the scatterplots, NOT a
-substitute for the individual-level multilevel models.
+IMPORTANT: these are ecological associations (vulnerable to the ecological
+fallacy). They are companions to the scatterplots, NOT a substitute for the
+individual-level multilevel models.
 
-Consistency rule: the fitted model must match what geom_smooth draws.
-linear -\> geom_smooth(method = "lm", formula = y \~ x, aes(weight =
-coverage)) quadratic -\> geom_smooth(method = "lm", formula = y \~
-poly(x, 2, raw = TRUE), aes(weight = coverage))
+Consistency rule: the fitted model must match what geom_smooth draws. linear -\>
+geom_smooth(method = "lm", formula = y \~ x, aes(weight = coverage)) quadratic
+-\> geom_smooth(method = "lm", formula = y \~ poly(x, 2, raw = TRUE), aes(weight
+= coverage))
 
 ```{r expl eco}
 eco_grid <- tidyr::expand_grid(
@@ -1147,8 +1145,8 @@ eco_grid <- tidyr::expand_grid(
 eco_gp <- run_grid_ecological(ds_gp, eco_grid, label = "gp")
 ```
 
-Expenditure shows counterintuitive pattern on turnover; the rest are
-expected -they might show tentative associations through other channels.
+Expenditure shows counterintuitive pattern on turnover; the rest are expected
+-they might show tentative associations through other channels.
 
-IMPORTANT: Act on WCs, on specific WCs, and on MH, not that much on
-proportions or densities -actually more actionable
+IMPORTANT: Act on WCs, on specific WCs, and on MH, not that much on proportions
+or densities -actually more actionable

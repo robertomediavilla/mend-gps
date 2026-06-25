@@ -3,5 +3,4 @@
 .RData
 .Ruserdata
 /data
-/out/models/main
-out/models/mediation
+/out/models
