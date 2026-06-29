@@ -598,7 +598,7 @@ run_ecological <-
            weight_var      = "coverage",
            outcome_type    = c("continuous", "proportion"),
            positive_level  = "Yes",
-           label           = "gp",
+           label,
            cache_dir       = "out/models/ecological",
            overwrite       = FALSE) {
     
@@ -726,7 +726,7 @@ run_grid_ecological <-
   function(data,
            grid,
            weight_var,
-           label      = "gp",
+           label,
            overwrite  = FALSE) {
     
     if (!"positive_level" %in% names(grid)) {

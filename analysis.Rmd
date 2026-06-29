@@ -1529,3 +1529,99 @@ expected -they might show tentative associations through other channels.
 
 IMPORTANT: Act on WCs, on specific WCs, and on MH, not that much on more
 linked to proximate factors than to density or other factors
+
+```{r eco w}
+
+# Create country-level weighted aggregates in one go
+ds_country_w <- 
+  
+  ds |>
+  drop_na(w_country_work_sex) |> 
+  group_by(loc_2) |>
+  summarise(
+    across(
+      all_of(c(wc_comp, "phqads_z")),
+      ~ weighted.mean(., w = w_country_work_sex, na.rm = TRUE)
+      ),
+    work_18 = weighted.mean(
+      as.numeric(work_18 == "Yes"),
+      w = w_country_work_sex,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  ) |>
+  # Carry forward any country-level predictors (density, expenditure, etc.)
+  left_join(
+    ds |>
+      distinct(loc_2, doc_100k, euro_per_inh, doc_coverage, .keep_all = FALSE),
+    by = "loc_2"
+  )
+
+ds_test <- 
+  
+  ds |>
+  drop_na(w_country_work_sex) |> 
+  group_by(loc_2) |>
+  summarise(
+    across(
+      all_of(c(wc_comp, "phqads_z")),
+      ~ mean(., na.rm = TRUE)
+    ),
+    work_18 = mean(
+      as.numeric(work_18 == "Yes"),
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  ) |>
+  # Carry forward any country-level predictors (density, expenditure, etc.)
+  left_join(
+    ds |>
+      distinct(loc_2, doc_100k, euro_per_inh, doc_coverage, .keep_all = FALSE),
+    by = "loc_2"
+  )
+
+
+eco_doc_w <- run_grid_ecological(data = ds_country_w, 
+                               grid = eco_grid_doc,  
+                               weight_var = "doc_coverage",
+                               label = "doc")
+
+eco_doc_test <- run_grid_ecological(data = ds_test, 
+                               grid = eco_grid_doc,  
+                               weight_var = "doc_coverage",
+                               label = "doc")
+
+eco_doc_w <- purrr::pmap_dfr(
+  eco_grid_doc,
+  function(outcome, predictor, outcome_type, positive_level, ...) {
+    run_ecological(
+      data           = ds_country_w,
+      outcome        = outcome,
+      predictor      = predictor,
+      weight_var     = "doc_coverage",
+      outcome_type   = outcome_type,
+      positive_level = "Yes",
+      label          = "doc_w"
+    )$summary
+  }
+)
+  
+
+eco_doc_test <- 
+  purrr::pmap_dfr(
+  eco_grid_doc,
+  function(outcome, predictor, outcome_type, positive_level, ...) {
+    run_ecological(
+      data           = ds_test,
+      outcome        = outcome,
+      predictor      = predictor,
+      weight_var     = "doc_coverage",
+      outcome_type   = c("continuous", "proportion"),
+      positive_level = "Yes",
+      label          = "doc_uw"
+    )$summary
+  }
+)
+```
+
+Essentially identical rewsults with weighted estimates
