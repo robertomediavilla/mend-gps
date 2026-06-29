@@ -351,6 +351,186 @@ run_mediation <- function(data, exposure_var, mediator_var, outcome_var,
   return(out)
 }
 
+# Weighted sensitivity analyses
+
+# Fixed-effects (single-level) GLMs, model-based SEs, survey weights
+# (w_country_work_sex: within-country x profession x sex poststratification to
+# the WHO/OECD/Eurostat doctor margins).
+#
+# Design choices (see notes at the bottom of each function):
+#   * No random intercept. Country (cluster_var) enters the MEAN model as a
+#     fixed effect, replacing the (1 | loc_2) of the primary models, so the
+#     weighted estimand stays matched to the primary (country-adjusted) one.
+#   * Weights are rescaled to mean 1 (sum = n) so the model-based SEs are on a
+#     sensible scale and do not depend on the absolute weight magnitude.
+#   * Intended to be fed pre-built weighted datasets (weight column present;
+#     rows with a missing weight are dropped here as a safeguard).
+
+
+#---- Fit weighted turnover models (sensitivity) ----
+
+run_adj_glm_w <-
+  function(data, outcome_var, exposure_var, confounder_list, profession,
+           weight_var = "w_country_work_sex",
+           cluster_var = "loc_2", family_type = "poisson", model_label,
+           output_dir = "out/models/main_w") {
+    
+    if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+    
+    # --- Abbreviation maps (unchanged from the unweighted version) ---
+    
+    out_short <- case_when(
+      outcome_var == "phq_co_poi"      ~ "dep",
+      outcome_var == "gad_co_poi"      ~ "anx",
+      outcome_var == "suic_idea_poi"   ~ "suic",
+      outcome_var == "cage_co_poi"     ~ "alc",
+      outcome_var == "work_18_poi"     ~ "turn",
+      TRUE ~ gsub("[^a-z0-9]", "", tolower(outcome_var))
+    )
+    
+    exp_short <- case_when(
+      exposure_var == "work_8_dic"    ~ "hrs",
+      exposure_var == "work_11_dic"   ~ "night",
+      exposure_var == "work_12_dic"   ~ "shift",
+      exposure_var == "work_19_dic"   ~ "influence",
+      exposure_var == "work_20_dic"   ~ "breaks",
+      exposure_var == "work_21_dic"   ~ "cols",
+      exposure_var == "work_22_dic"   ~ "superiors",
+      exposure_var == "work_23_dic"   ~ "deadline",
+      exposure_var == "work_24_dic"   ~ "angry",
+      exposure_var == "work_30_dic"   ~ "har",
+      exposure_var == "work_31_dic"   ~ "threats",
+      exposure_var == "work_32_dic"   ~ "viol",
+      exposure_var == "work_33_dic"   ~ "bul",
+      exposure_var == "phqads_z"      ~ "phqads",
+      exposure_var == "phq_co"        ~ "dep",
+      exposure_var == "gad_co"        ~ "anx",
+      exposure_var == "wc_demands"    ~ "dem",
+      exposure_var == "wc_hazards"    ~ "haz",
+      exposure_var == "wc_resources"  ~ "res",
+      exposure_var == "wc_demands_z"   ~ "dem_z",
+      exposure_var == "wc_hazards_z"   ~ "haz_z",
+      exposure_var == "wc_resources_z" ~ "res_z",
+      TRUE ~ gsub("[^a-z0-9]", "", tolower(exposure_var))
+    )
+    
+    prof_short <- case_when(
+      profession == "Doctor" ~ "doc",
+      profession == "Nurse"  ~ "nur",
+      profession == "All"    ~ "all",
+      profession == "GP"     ~ "gp",
+      profession == "Non-GP" ~ "nongp",
+      TRUE ~ gsub("[^a-z0-9]", "", tolower(profession))
+    )
+    
+    model_suffix <- case_when(
+      model_label == "Partially adjusted" ~ "str",
+      model_label == "Fully adjusted"     ~ "adj",
+      model_label == "Crude"              ~ "cr",
+      TRUE ~ tolower(gsub(" ", "_", model_label))
+    )
+    
+    message("out: ", out_short, " | exp: ", exp_short,
+            " | prof: ", prof_short, " | mod: ", model_suffix, " | WEIGHTED")
+    
+    # --- Detect exposure type ---
+    is_binary_exposure <- is.factor(data[[exposure_var]]) &&
+      all(levels(data[[exposure_var]]) %in% c("No", "Yes"))
+    
+    # --- Subset and clean ---
+    # Data pre-filtered externally; profession label is for file naming only.
+    ds_sub <- data
+    active_confounders <- setdiff(confounder_list, "work_2")
+    
+    # Country enters the mean model as a fixed effect (replaces (1 | loc_2)).
+    model_terms <- unique(c(active_confounders, cluster_var))
+    
+    required_vars <- unique(c(outcome_var, exposure_var, weight_var,
+                              cluster_var, active_confounders))
+    
+    ds_clean <- ds_sub |> select(all_of(required_vars)) |> drop_na()
+    
+    n_size <- nrow(ds_clean)
+    if (n_size < 10) return(NULL)
+    
+    message("n_size: ", n_size)
+    message("outcome range: ",
+            paste(range(ds_clean[[outcome_var]], na.rm = TRUE), collapse = "-"))
+    
+    if (is_binary_exposure) {
+      ds_clean[[exposure_var]] <- factor(ds_clean[[exposure_var]],
+                                         levels = c("No", "Yes"))
+    }
+    ds_clean[[cluster_var]] <- factor(ds_clean[[cluster_var]])  # -> dummies
+    
+    y_raw <- as.numeric(ds_clean[[outcome_var]])
+    if (max(y_raw, na.rm = TRUE) > 1) ds_clean[[outcome_var]] <- y_raw - 1
+    
+    # --- Normalise weights to mean 1 (sum = n) ---
+    w <- ds_clean[[weight_var]]
+    ds_clean$.w <- w / mean(w, na.rm = TRUE)
+    
+    curr_family <- if (family_type == "gaussian") gaussian() else
+      poisson(link = "log")
+    
+    # --- Fit single weighted fixed-effects GLM (caching kept) ---
+    file_name <- paste0("glmw_", out_short, "_", exp_short, "_",
+                        prof_short, "_", model_suffix, ".rds")
+    file_path <- file.path(output_dir, file_name)
+    
+    fit <- NULL
+    if (file.exists(file_path)) {
+      fit <- tryCatch(readRDS(file_path), error = function(e) {
+        file.remove(file_path); NULL })
+    }
+    
+    if (is.null(fit)) {
+      f <- reformulate(c(exposure_var, model_terms), response = outcome_var)
+      fit <- glm(f, data = ds_clean, family = curr_family, weights = .w)
+      saveRDS(fit, file_path)
+    }
+    
+    # --- Extract coefficient (type-aware) ---
+    coef_name <- if (is_binary_exposure) paste0(exposure_var, "Yes") else
+      exposure_var
+    
+    cf   <- summary(fit)$coefficients
+    beta <- cf[coef_name, "Estimate"]
+    se   <- cf[coef_name, "Std. Error"]        # model-based SE (as requested)
+    pr   <- exp(beta)
+    ci   <- exp(beta + c(-1, 1) * 1.96 * se)
+    
+    # If a cluster-robust SE is ever wanted instead of the model-based one:
+    # se <- sqrt(sandwich::vcovCL(fit, cluster = ds_clean[[cluster_var]])[coef_name, coef_name])
+    # ci <- exp(beta + c(-1, 1) * 1.96 * se)
+    
+    # --- Weighted (population-standardised) marginal risks (binary exposure) ---
+    if (is_binary_exposure) {
+      dat_unexp <- ds_clean; dat_exp <- ds_clean
+      dat_unexp[[exposure_var]] <- factor("No",  levels = c("No", "Yes"))
+      dat_exp[[exposure_var]]   <- factor("Yes", levels = c("No", "Yes"))
+      r0 <- weighted.mean(predict(fit, dat_unexp, type = "response"), ds_clean$.w)
+      r1 <- weighted.mean(predict(fit, dat_exp,   type = "response"), ds_clean$.w)
+      risk_unexp_str <- sprintf("%.1f%%", r0 * 100)
+      risk_exp_str   <- sprintf("%.1f%%", r1 * 100)
+    } else {
+      risk_unexp_str <- NA_character_
+      risk_exp_str   <- NA_character_
+    }
+    
+    # --- Output tibble (same columns as the unweighted robust output) ---
+    results <- tibble(
+      model = "Weighted Poisson (fixed effects)", Outcome = outcome_var,
+      Exposure = exposure_var, Profession = profession,
+      Adjustment = model_label, beta = beta, SE = se,
+      PR = pr, CI_l = ci[1], CI_u = ci[2],
+      N_Analysis = n_size, Risk_Unexp = risk_unexp_str,
+      Risk_Exp = risk_exp_str
+    )
+    
+    return(results)
+  }
+
 #---- Aggregation helper ----
 
 # Collapse individual-level data to one row per country. predictor and
