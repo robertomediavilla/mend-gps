@@ -506,6 +506,20 @@ ds_docw <- ds_doc |> drop_na(w_country_work_sex)
 ## Individual level
 
 ```{r tbls}
+#----All----
+ds_doc |> 
+  select(all_of(scdm), specialty_cat, work_18) |> 
+  tbl_summary(by = "work_18")
+
+ds_doc |> 
+  select(all_of(c(mh_sc, mh_dic)), work_18) |> 
+  tbl_summary(by = "work_18")
+
+ds_doc |> 
+  select(all_of(all_wc), work_18) |> 
+  tbl_summary(by = "work_18")
+
+#----GPs----
 ds_gp |> 
   select(all_of(scdm), work_18) |> 
   tbl_summary(by = "work_18")
@@ -514,7 +528,7 @@ ds_gp |>
   select(all_of(c(mh_sc, mh_dic)), work_18) |> 
   tbl_summary(by = "work_18")
 
-ds |> 
+ds_gp |> 
   select(all_of(all_wc), work_18) |> 
   tbl_summary(by = "work_18")
 ```
@@ -524,6 +538,7 @@ ds |>
 ## Coverage
 
 ```{r coverage}
+#----GPs----
 country_coverage |> 
   ggplot(aes(x = loc_2, y = coverage)) +
   geom_col() +

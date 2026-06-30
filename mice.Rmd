@@ -1,0 +1,507 @@
+---
+title: "MICE"
+output: html_document
+date: "2026-06-30"
+---
+
+```{r load mids mice}
+imp_ds <- readRDS("data/mice_imputed_data.rds") # MI ds
+
+imputed_data_final <- readRDS("data/mice_imputed_data_scored.rds") # MI with scores
+
+ds_imp1 <- complete(imputed_data_final, action = 1) # first MI ds
+
+common_cols <- intersect(names(ds), names(ds_imp1))
+
+for (col in common_cols) {
+  # If the original column has a label, copy it to the new column
+  if (!is.null(attr(ds[[col]], "label"))) {
+    attr(ds_imp1[[col]], "label") <- attr(ds[[col]], "label")
+  }
+}
+
+long_all <- complete(imputed_data_final, # required for pooling
+                     action = "long", 
+                     include = FALSE)
+
+imputed_datasets <- complete(imputed_data_final,# required for assoc models
+                             action = "all")
+
+```
+
+```{r}
+ds_m <- 
+  
+  ds |> 
+  filter(work_2 == "Doctor" & !is.na(scdm_2_rec)) |> 
+  select(
+    loc_2,
+    all_of(c(scdm, all_wc_bis)),
+    "specialty_cat",
+    "mh_phq_1", "mh_phq_2", "mh_phq_3", "mh_phq_4", "mh_phq_5", "mh_phq_6",
+    "mh_phq_7", "mh_phq_8", "mh_phq_9", 
+    "mh_gad_1", "mh_gad_2", "mh_gad_3", "mh_gad_4", "mh_gad_5", "mh_gad_6",
+    "mh_gad_7",
+    "work_18")
+```
+
+## Baseline setup
+
+```{r baseline setup mice, eval = FALSE}
+init_run <- mice(ds_m, 
+                 maxit = 0)
+
+# Extract default methods vector
+meth <- init_run$method
+
+# Reassign methods dynamically
+for(i in names(meth)) {
+  
+  if(is.factor(ds_m[[i]]) || is.ordered(ds_m[[i]])) {
+    meth[i] <- "cart" # Ignores collinearity traps
+  } else if (is.numeric(ds_m[[i]]) || is.integer(ds_m[[i]])) {
+    
+    meth[i] <- "pmm"
+  }
+}
+
+# Smart predictor matrix
+# mincor tells mice to use only predictors with at least 0.1 correlation
+pred_smart <- quickpred(ds_m, 
+                        mincor = 0.15,
+                        include = "loc_2")
+
+# Use more than one core
+plan(multisession, workers = 4)
+
+# Test
+message("Running test drive...")
+test_imputation <- mice(
+  ds_m,
+  method = meth,
+  predictorMatrix = pred_smart, # smart matrix 
+  m = 1,       
+  maxit = 1,   
+  seed = 123
+)
+```
+
+## Run MICE
+
+```{r run mice, eval = FALSE}
+# Run imputation using custom vector
+imputed_data <- futuremice(
+  ds_m,
+  method = meth,
+  predictorMatrix = pred_smart,
+  m = 20, # Standard is 20 imputations
+  maxit = 5,
+  parallelseed = 123
+)
+
+# Save so we don't re run
+saveRDS(imputed_data, 
+        file = "data/mice_imputed_data.rds")
+```
+
+## Imputed data diagnostics
+
+```{r imp diag, eval = FALSE}
+
+
+# Unpack all 20 imputations into one long dataset
+# include = FALSE so we don't accidentally count the raw dataset's NAs
+long_check <- complete(imp_ds, 
+                       action = "long", 
+                       include = FALSE)
+
+# Count the exact number of NAs for every single column across all 20 datasets
+missing_report <-
+  long_check |>
+  summarise(across(everything(), ~ sum(is.na(.)))) |>
+  pivot_longer(
+    cols = everything(), 
+    names_to = "Variable", 
+    values_to = "Total_NAs") |>
+  # Only keep variables that still have missing data
+  filter(Total_NAs > 0) |>
+  arrange(desc(Total_NAs))
+
+# Print the full report
+print(missing_report, n = Inf)
+
+# Plot the convergence for a selection of important variables
+
+mice_plot_1_convergence <- plot(imp_ds, c("mh_phq_9", "scdm_1", "work_31", "work_8"))
+
+# "Convergence of the MICE algorithm was confirmed via visual inspection of trace plots for the means and standard deviations of the imputed variables. The imputation chains intermingled freely and exhibited no discernible trends or pathological behavior across the 5 iterations, confirming successful convergence."
+
+# density plot. Should be similar
+
+# Visual check that imputed values are plausible
+
+# Red = imputed, Blue = observed
+densityplot(imp_ds, ~ mh_phq_1 + mh_phq_9 + work_8 + work_31)
+
+stripplot(imp_ds, work_11 + work_30 + work_33 ~ .imp, pch = 20, cex = 1.2) # spread should be similar
+```
+
+## Transform variables new scores
+
+```{r compute outcome scores, eval = FALSE}
+
+# Define country-specific cut-offs
+# Create objects with cut-off scores per country
+
+phq_co_st <- c("Belgium",
+               "Bulgaria",
+               "Croatia",
+               "Cyprus",
+               "Czechia",
+               "Denmark",
+               "Estonia",
+               "Finland",
+               "France",
+               "Greece",
+               "Hungary",
+               "Ireland",
+               "Italy",
+               "Luxembourg",
+               "Malta",
+               "Netherlands",
+               "Norway",
+               "Poland",
+               "Romania",
+               "Slovakia",
+               "Armenia",
+               "Azerbaijan",
+               "Georgia",
+               "Moldova",
+               "Ukraine")
+
+phq_co_8 <- "Latvia"
+
+phq_co_9 <- c("Portugal",
+              "Slovenia")
+
+phq_co_11 <- c("Austria",
+               "Germany",
+               "Lithuania")
+
+phq_co_12 <- c("Iceland",
+               "Spain",
+               "Sweden")
+
+gad_co_st <- c("Austria",
+               "Belgium",
+               "Bulgaria",
+               "Croatia",
+               "Cyprus",
+               "Czechia",
+               "Denmark",
+               "Estonia",
+               "Germany",
+               "Greece",
+               "Hungary",
+               "Iceland",
+               "Ireland",
+               "Italy",
+               "Luxembourg",
+               "Poland",
+               "Romania",
+               "Slovakia",
+               "Slovenia",
+               "Spain",
+               "Armenia",
+               "Azerbaijan",
+               "Georgia",
+               "Moldova",
+               "Ukraine")
+
+gad_co_5 <- "Latvia"
+
+gad_co_7 <- c("Finland",
+              "France")
+
+gad_co_8 <- c("Malta",
+              "Norway",
+              "Portugal",
+              "Sweden")
+
+gad_co_9 <- "Lithuania"
+
+gad_co_12 <- "Netherlands"
+
+
+# Extract all 20 datasets into one "long" dataframe.
+# include = TRUE pulls out original raw dataset as well (Dataset 0). 
+# We must have this to package it back up into a MICE object later!
+
+long_data <- complete(imp_ds, 
+                      action = "long",
+                      include = TRUE)
+
+# Calculate the total scores across all rows
+long_data_scored <- 
+  
+  long_data  |>
+  mutate(
+    phq_sc = rowSums(pick(mh_phq_1:mh_phq_9)),
+    gad_sc = rowSums(pick(mh_gad_1:mh_gad_7)),
+    cage_sc = rowSums(pick(mh_cage_1:mh_cage_4)),
+    wb_who_sc = rowSums(pick(wb_who_1:wb_who_5)) * 4
+  ) |> 
+  ungroup() |> 
+  # Now the cut-offs
+  mutate(
+    # Assign the correct threshold based on country
+    phq_threshold = case_when(
+      loc_2 %in% phq_co_st ~ 10,
+      loc_2 %in% phq_co_8  ~ 8, 
+      loc_2 %in% phq_co_9  ~ 9,
+      loc_2 %in% phq_co_11 ~ 11,
+      loc_2 %in% phq_co_12 ~ 12
+    ),
+    
+    gad_threshold = case_when(
+      loc_2 %in% gad_co_st ~ 10,
+      loc_2 == gad_co_5    ~ 5,
+      loc_2 %in% gad_co_7  ~ 7,
+      loc_2 %in% gad_co_8  ~ 8,
+      loc_2 == gad_co_9    ~ 9,
+      loc_2 == gad_co_12   ~ 12
+    ),
+    
+    # Create the clean binary Poisson outcomes (1 = case, 0 = healthy)
+    phq_co_poi = as.numeric(phq_sc >= phq_threshold),
+    gad_co_poi = as.numeric(gad_sc >= gad_threshold),
+    
+    # CAGE
+    cage_co_poi = as.numeric(cage_sc > 2),
+    
+    # Item 9 PHQ
+    suic_idea_poi = as.numeric(mh_phq_9 > 0),
+    
+    # WHO-5
+    wb_who_co = as.numeric(wb_who_sc >= 50)
+  )
+```
+
+```{r compute exp and covs, eval = FALSE}
+# Re-create exposures recoding
+
+long_data_transformed <- 
+  
+  long_data_scored |> 
+  
+  mutate(scdm_1_rec = fct_collapse(scdm_1,
+                                   "<30" = c("Under 20", "20-25", "26-30"),
+                                   "30-39" = c("31-35", "36-40"),
+                                   "40-49" = c("41-45", "46-50"),
+                                   "50-59" = c("51-55", "56-60"),
+                                   "60+" = c("61-65", "66-70", "Over 70")
+                                   )
+         ) |> 
+  
+  mutate(scdm_5_dic = case_when(
+    str_detect(scdm_5, "with children") ~ "Has children",
+    str_detect(scdm_5, "without children") ~ "No children",
+    TRUE ~ NA
+    ),
+    scdm_5_dic = factor(scdm_5_dic,
+                        levels = c("Has children", "No children"),
+                        ordered = FALSE)
+  ) |>
+  
+  # recode length of service
+  
+  mutate(work_3_rec = fct_collapse(
+    work_3,
+    "5 years or less" = c("Less than 1 year", "1-3 years", "4-5 years"),
+    "More than 10 years" = c("11-20 years", "21-30 years", "31-40 years",
+                             "More than 40 years")
+    )
+  ) |> 
+  
+  # job positions
+  
+  mutate(
+    work_4_dic = if_else(work_4 == "One",
+                         "One",
+                         "More than one"),
+    work_4_dic = factor(work_4_dic,
+                        levels = c("One", "More than one"))
+  ) |> 
+  
+  # work setting
+  
+   mutate(work_5_rec = fct_collapse( 
+    work_5,
+    "Inpatient" = c("Emergency department",
+                    "In-hospital care"),
+    "Outpatient" = c("Outpatient primary care",
+                     "Outpatient secondary care"),
+    "Other" = c("Extra-hospital emergencies",
+                "Other")
+  )
+  ) |> 
+  
+  # recode working hours
+  
+    
+  mutate(
+    work_8_dic = case_when(
+      work_8 %in% c("< 11 h", "11-20 h", "21-30 h", "31-40 h", "41-50 h") ~ "No", # <= 50h
+      work_8 %in% c("51-60 h", "61-70 h", "> 70 h") ~ "Yes"), # > 50h
+    work_8_dic = factor(work_8_dic, levels = c("No", "Yes"))
+  ) |> 
+  
+  # recode night work
+
+  mutate(
+    work_11_dic = case_when(
+      work_11 %in% c("1-2 times/month", "Less than monthly", "Never/Rarely") ~ "No", # 1 or 2x a month or less
+      work_11 %in% c("Daily", "Almost daily", "2-3 days/week", "Once a week", "Almost weekly") ~ "Yes"), # Almost every week and more
+    work_11_dic = factor(work_11_dic, levels = c("No", "Yes")),
+    work_11 = fct_rev(work_11)
+  ) |> 
+  
+  # name var for shifts
+  
+  mutate(work_12_dic = factor(work_12, levels = c("No", "Yes"))
+  ) |> 
+  
+  # create dichotomic for contract type
+  
+  mutate(work_16_dic = fct_recode(work_16,
+                                  "Yes" = "Temporary contract",
+                                  "No" = "Fixed contract"),
+         work_16_dic = factor(work_16_dic,
+                              levels = c("No", "Yes"),
+                              ordered = FALSE)
+  ) |> 
+  
+  # recode managing patient anger
+  
+  mutate(
+    across(
+      all_of(c("work_23", "work_24")),
+      ~ factor(
+        fct_collapse(.x,
+                     "Yes" = c("Around 1/4 of the time",
+                               "Around half of the time",
+                               "Around 3/4 of the time",
+                               "Almost all of the time",
+                               "All of the time"),
+                     "No" = c("Never",
+                              "Almost never")),
+                     levels = c("No", "Yes"),
+                     ordered = FALSE),
+        .names = "{.col}_dic"
+        )
+      ) |> 
+  
+  # recode violence
+  
+   mutate(
+    across(
+      all_of(hazards),
+      ~ factor(
+        fct_collapse(.x,
+                     "Yes" = c("Yes, daily", 
+                             "Yes, weekly", 
+                             "Yes, monthly", 
+                             "Yes, a few times"),
+                     "No" = "No"
+        ),
+        levels = c("No", "Yes"), ordered = FALSE
+      ),
+      .names = "{.col}_dic"
+    )
+  ) |>
+  
+  # Recode protocols, drop "Do not know", ensure factor levels
+ 
+   mutate(
+    across(
+      all_of(protocols),
+      ~ fct_recode(.x, NULL = "Do not know"),
+      .names = "{.col}_dic"
+    )
+  ) |> 
+
+  # relevel protocols
+
+  mutate(
+    across(
+      all_of(protocols),
+      ~ fct_relevel(factor(.x), "No"),
+      .names = "{.col}_dic"
+    )
+  ) |> 
+  
+  # recode protective factors (except w-l balance)
+  
+  mutate(
+    across(
+      all_of(c("work_19", "work_20", "work_21", "work_22")),
+      ~ factor(
+        fct_collapse(.x,
+                     "No" = c("Sometimes", "Seldom", "Never / Hardly ever"),
+                     "Yes" = c("Always", "Often"),
+        ),
+        levels = c("No", "Yes"), ordered = FALSE
+      ),
+      .names = "{.col}_dic"
+    )
+  ) |> 
+  
+  # recode work-life balance
+  
+  mutate(
+    work_34_dic = case_when(
+      work_34 %in% c("To a very small extent", "To a small extent", "To a moderate extent") ~ "No",
+      work_34 %in% c("To a large extent", "To a very large extent") ~ "Yes"),
+    work_34_dic = factor(work_34_dic, levels = c("No", "Yes"))
+  ) |> 
+  
+  # create numeric variables
+  
+  mutate(
+    across(
+      all_of(hazards),
+      ~ case_when(
+        .x == "No"                ~ 0,
+        .x == "Yes, a few times"  ~ 1,
+        .x == "Yes, monthly"      ~ 2,
+        .x == "Yes, weekly"       ~ 3,
+        .x == "Yes, daily"        ~ 4,
+        TRUE                      ~ NA_real_
+        ),
+      .names = "{.col}_num"
+      )
+    ) |> 
+  mutate(
+    across(
+      all_of(demands) & !all_of("work_12"), # work_12 is binary
+      \(x) as.numeric(x) - 1, # 0 as reference
+    .names = "{.col}_num")) |> 
+  mutate(
+    across(
+      all_of(resources),
+      \(x) as.numeric(x) - 1, # 0 as reference
+    .names = "{.col}_num"))
+```
+
+```{r wrap it up, eval = FALSE}
+
+imputed_data_final <- as.mids(long_data_transformed)
+
+
+
+saveRDS(imputed_data_final, file = "data/mice_imputed_data_scored.rds")
+
+
+rm(gad_co_12, gad_co_5, gad_co_7, gad_co_8, gad_co_9, gad_co_st, phq_co_11, 
+   phq_co_12, phq_co_8, phq_co_9, phq_co_st)
+```
