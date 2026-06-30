@@ -72,18 +72,18 @@ pred_smart <- quickpred(ds_m,
                         include = "loc_2")
 
 # Use more than one core
-plan(multisession, workers = 4)
+future::plan(multisession, workers = 4)
 
 # Test
 message("Running test drive...")
-test_imputation <- mice(
+test_imputation <- futuremice(
   ds_m,
   method = meth,
   predictorMatrix = pred_smart, # smart matrix 
   m = 1,       
   maxit = 1,   
   seed = 123
-)
+  )
 ```
 
 ## Run MICE
@@ -107,11 +107,11 @@ saveRDS(imputed_data,
 ## Imputed data diagnostics
 
 ```{r imp diag, eval = FALSE}
-
+imputed_data
 
 # Unpack all 20 imputations into one long dataset
 # include = FALSE so we don't accidentally count the raw dataset's NAs
-long_check <- complete(imp_ds, 
+long_check <- complete(imputed_data, 
                        action = "long", 
                        include = FALSE)
 
@@ -132,7 +132,7 @@ print(missing_report, n = Inf)
 
 # Plot the convergence for a selection of important variables
 
-mice_plot_1_convergence <- plot(imp_ds, c("mh_phq_9", "scdm_1", "work_31", "work_8"))
+mice_plot_1_convergence <- plot(imputed_data, c("mh_phq_9", "scdm_1_rec", "work_31", "work_8"))
 
 # "Convergence of the MICE algorithm was confirmed via visual inspection of trace plots for the means and standard deviations of the imputed variables. The imputation chains intermingled freely and exhibited no discernible trends or pathological behavior across the 5 iterations, confirming successful convergence."
 
@@ -141,9 +141,9 @@ mice_plot_1_convergence <- plot(imp_ds, c("mh_phq_9", "scdm_1", "work_31", "work
 # Visual check that imputed values are plausible
 
 # Red = imputed, Blue = observed
-densityplot(imp_ds, ~ mh_phq_1 + mh_phq_9 + work_8 + work_31)
+densityplot(imputed_data, ~ mh_phq_1 + mh_phq_9 + work_8 + work_31)
 
-stripplot(imp_ds, work_11 + work_30 + work_33 ~ .imp, pch = 20, cex = 1.2) # spread should be similar
+stripplot(imputed_data, work_18 + work_30 + work_33 ~ .imp, pch = 20, cex = 1.2) # spread should be similar
 ```
 
 ## Transform variables new scores
