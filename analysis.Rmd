@@ -34,6 +34,10 @@ cb <- # codebook
 
   read.csv("ext/data_mapping.csv", na.strings = "")
 
+ds_mice <- 
+  
+  readRDS("data/mice_imputed_data.rds") # see mice.Rmd for details
+
 #---- External data ----
 
 who_n_loc <- 
@@ -428,7 +432,7 @@ ds <- ds |>
 #---- 7. Primary outcome ----
 ds <- ds |>
   mutate(
-    work_18_poi = as.integer(if_else(work_18 == "Yes", 1L, 0L))
+    work_18_poi = as.integer(if_else(work_18 == "Yes", 1, 0))
   )
 
 #---- 8. Join macro variables ----
@@ -491,7 +495,19 @@ grid_med_doc <- grid_med_gp |> mutate(profession = "Doctor")
 ```
 
 ```{r labels}
-#TODO: add variable labels
+variable_labels <- readxl::read_excel("ext/var_labels_who_survey.xlsx")
+
+for (i in 1:nrow(variable_labels)) {
+  uuid <- variable_labels$Question_uuid[i]
+  label <-  variable_labels$Label[i]
+  ds[[uuid]] <- sjlabelled::set_label(ds[[uuid]], label)
+}
+
+rm(variable_labels,
+   i,
+   uuid,
+   label)
+
 ```
 
 ```{r filters}
@@ -538,8 +554,16 @@ ds_gp |>
 ## Coverage
 
 ```{r coverage}
+#----All----
+
+country_coverage_doc |> 
+  ggplot(aes(x = loc_2, y = doc_coverage)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = -0.5) +
+  ylim(0,100)
+
 #----GPs----
-country_coverage |> 
+country_coverage_gp |> 
   ggplot(aes(x = loc_2, y = coverage)) +
   geom_col() +
   geom_text(aes(label = n), vjust = -0.5)
@@ -1126,10 +1150,10 @@ wc_expend_plot_doc <- ggpubr::ggarrange(p1, p2, p3)
 
 ## Turnover intentions
 
-```{r turn eco}
+```{r gp turn}
 p1 <- 
   ds_gp |> 
-  group_by(loc_2, gp_100k, coverage) |>
+  group_by(loc_2, gp_100k, gp_coverage) |>
   summarise(
     n_turnover = sum(work_18 == "Yes", na.rm = TRUE),
     n_total = sum(!is.na(work_18)),
@@ -1143,7 +1167,7 @@ p1 <-
                         ~prop.test(.x, .y)$conf.int[2])
   ) |>
   ggplot(aes(x = gp_100k, y = prop_turnover)) +
-  geom_point(aes(size = coverage), alpha = 0.6) +
+  geom_point(aes(size = gp_coverage), alpha = 0.6) +
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper, width = 0.02), 
                 alpha = 0.5) +
   ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
@@ -1155,7 +1179,7 @@ p1 <-
 
 p2 <- 
   ds_gp |> 
-  group_by(loc_2, gp_prop, coverage) |>
+  group_by(loc_2, gp_prop, gp_coverage) |>
   summarise(
     n_turnover = sum(work_18 == "Yes", na.rm = TRUE),
     n_total = sum(!is.na(work_18)),
@@ -1169,7 +1193,7 @@ p2 <-
                         ~prop.test(.x, .y)$conf.int[2])
   ) |>
   ggplot(aes(x = gp_prop, y = prop_turnover)) +
-  geom_point(aes(size = coverage), alpha = 0.6) +
+  geom_point(aes(size = gp_coverage), alpha = 0.6) +
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper, width = 0.02), 
                 alpha = 0.5) +
   ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
@@ -1181,7 +1205,7 @@ p2 <-
 
 p3 <- 
   ds_gp |> 
-  group_by(loc_2, euro_per_inh, coverage) |>
+  group_by(loc_2, euro_per_inh, gp_coverage) |>
   summarise(
     n_turnover = sum(work_18 == "Yes", na.rm = TRUE),
     n_total = sum(!is.na(work_18)),
@@ -1195,7 +1219,7 @@ p3 <-
                         ~prop.test(.x, .y)$conf.int[2])
   ) |>
   ggplot(aes(x = euro_per_inh, y = prop_turnover)) +
-  geom_point(aes(size = coverage), alpha = 0.6) +
+  geom_point(aes(size = gp_coverage), alpha = 0.6) +
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper, width = 0.02), 
                 alpha = 0.5) +
   ggrepel::geom_text_repel(aes(label = loc_2), size = 3) +
@@ -1207,6 +1231,11 @@ p3 <-
 
 turn_eco_plot <- ggarrange(p1, p2, p3)
 ```
+
+```{r}
+#TODO: rethink viz, same plot with doc
+```
+
 
 # Models
 
